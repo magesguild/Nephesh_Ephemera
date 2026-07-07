@@ -216,6 +216,95 @@ not in handler body.
 
 ---
 
+## 8. Production Capability Options
+
+### MCP Server Frameworks
+
+FastMCP is fine for single-server deployments up to moderate load. Production
+options when you outgrow it:
+
+| Approach | Description | Best For |
+|----------|-------------|----------|
+| **FastMCP + custom Starlette app** | Mount multiple FastMCP instances under one Uvicorn; add custom middleware for auth, rate limiting, logging | Single-team, moderate scale |
+| **MCP Gateway** | Dedicated reverse proxy terminating all client connections, routing to backend MCP servers. Single enforcement point for identity, audit, policy. | Regulated orgs, multi-server |
+| **Streamable HTTP transport** | Stateless transport replacing SSE — no persistent connection, scales horizontally with standard load balancers | High-scale, auto-scaling |
+
+### Gateway Pattern (Recommended for Regulated Orgs)
+
+The gateway pattern is non-negotiable for compliance at scale:
+
+```
+Client → Gateway (auth, audit, rate limit, policy) → Backend MCP servers
+          │                                              │
+          │ OAuth 2.1 + PKCE                             │ mTLS + scoped tokens
+          │ Audit → SIEM (Splunk/Datadog)                │
+          │ Policy → OPA/Cedar                           │
+```
+
+Without a gateway, every backend server reimplements auth and auditing
+independently — audit scope grows linearly with server count.
+
+Products: DigitalAPI MCP Gateway, MintMCP, or roll your own with Envoy + OPA.
+
+### Streaming vs Stateless Transport
+
+| Property | SSE | Streamable HTTP |
+|----------|-----|-----------------|
+| Connection | Persistent | Stateless |
+| Scaling | Stateful (sticky sessions) | Stateless (round-robin) |
+| Load balancer | Sticky sessions required | Any LB |
+| Backend server | Must keep client state | No client state |
+| Retry | Last-Event-ID | Client-managed |
+
+Streamable HTTP is the 2026 spec direction. SSE is stable and well-understood.
+For compliant deployments, Streamable HTTP simplifies auditing since no
+per-session state lives on the server.
+
+### Vector Database: Prototype to Production
+
+| Dimension | ChromaDB (current) | Qdrant | Weaviate | Pinecone |
+|-----------|-------------------|--------|----------|----------|
+| Scale | ~1M vectors/node | ~10M+/node | ~10M+/node | Unlimited (SaaS) |
+| HA/Replication | None built-in | Native Raft | Native | Managed |
+| Hybrid search | No | BM25 + dense | BM25 + dense | No |
+| Multi-node | No | Yes | Yes | Managed |
+| Filters | Scan-based | Indexed | Indexed | Indexed |
+| Self-host | pip install | Docker | Docker | N/A |
+| Auth/RBAC | None | API key + TLS | API key + OIDC | API key |
+
+**Qdrant** is the strongest self-hosted option — Rust-based, fast, hybrid
+search (dense + BM25), native raft replication, proper auth. The API concepts
+map 1:1 with ChromaDB, so migration is straightforward.
+
+**Weaviate** if you want built-in modules (generative search, summarization,
+classification via GraphQL). More opinionated, more batteries-included.
+
+**Pinecone** if you want zero ops and have the budget. Lock-in risk, but the
+fastest path to production.
+
+### Production Authentication & Authorization
+
+Our compliance layer sketches the concept; production requires:
+
+- **OAuth 2.1 + PKCE** with per-tool scope claims (e.g., `scope:search:read`)
+- **Token binding** — every MCP session bound to a specific access token, short
+  expiry, refresh tokens rotated server-side
+- **mTLS between gateway and backend servers** — network-level identity so an
+  attacker at the network layer can't impersonate the gateway
+- **Just-In-Time (JIT) authorization** — tools authorized per-call against an
+  external Policy Decision Point (OPA, Cedar, Auth0 FGA), not a static token check
+
+### Migration Path
+
+| Phase | Server | Vector DB | Auth | Transport |
+|-------|--------|-----------|------|-----------|
+| Weekend project (current) | FastMCP standalone | ChromaDB | None / env var | SSE |
+| Team pilot | FastMCP + custom middleware | ChromaDB or Qdrant | Bearer token + scopes | SSE |
+| Production regulated | Gateway + backend servers | Qdrant/Pinecone | OAuth 2.1 + PKCE + mTLS | Streamable HTTP |
+| Enterprise multi-tenant | Gateway + mesh | Qdrant cluster | OAuth 2.1 + JIT + OPA | Streamable HTTP |
+
+---
+
 ### References
 
 - [MCP Specification](https://modelcontextprotocol.io/)
