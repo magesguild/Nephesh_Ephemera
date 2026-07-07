@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from mcp.server.fastmcp import FastMCP
+
 from ..compliance import ComplianceLevel, ServerMode, is_tool_available_in_mode
 from ..config import settings
 from . import vector_db
@@ -9,32 +11,26 @@ from . import vector_db
 _TOOL_MODULES = [vector_db]
 
 
-def get_all_tools() -> list[dict[str, Any]]:
-    tools: list[dict[str, Any]] = []
+def register_all(app: FastMCP) -> None:
     for mod in _TOOL_MODULES:
-        if hasattr(mod, "get_tool_registrations"):
-            tools.extend(mod.get_tool_registrations())
-    return tools
+        if hasattr(mod, "TOOL_DEFINITIONS"):
+            for t in mod.TOOL_DEFINITIONS:
+                compliance: ComplianceLevel = t.get("compliance", ComplianceLevel.NON_COMPLIANT)
+                ok, reason = is_tool_available_in_mode(t["name"], compliance, settings.server_mode)
+                if not ok:
+                    continue
+
+                app.add_tool(
+                    fn=t["fn"],
+                    name=t["name"],
+                    description=t["description"],
+                )
 
 
-def get_available_tools() -> list[dict[str, Any]]:
-    all_tools = get_all_tools()
-    available = []
-    for t in all_tools:
-        compliance = t.get("compliance", ComplianceLevel.NON_COMPLIANT)
-        ok, reason = is_tool_available_in_mode(
-            t["name"], compliance, settings.server_mode
-        )
-        if ok:
-            available.append(t)
-    return available
-
-
-async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
+def get_registered_names() -> list[str]:
+    names: list[str] = []
     for mod in _TOOL_MODULES:
-        if hasattr(mod, "handle_tool_call"):
-            try:
-                return await mod.handle_tool_call(name, arguments)
-            except ValueError:
-                continue
-    raise ValueError(f"Unknown tool: {name}")
+        if hasattr(mod, "TOOL_DEFINITIONS"):
+            for t in mod.TOOL_DEFINITIONS:
+                names.append(t["name"])
+    return names
