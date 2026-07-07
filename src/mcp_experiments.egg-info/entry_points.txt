@@ -1,0 +1,2 @@
+[console_scripts]
+mcp-experiments = mcp_experiments.__main__:main
