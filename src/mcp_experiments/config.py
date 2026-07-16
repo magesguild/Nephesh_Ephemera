@@ -41,6 +41,17 @@ class Settings:
     # queued; they simply remain private, low-importance reflections.
     message_daily_limit: int = int(os.getenv("MESSAGE_DAILY_LIMIT", "1"))
 
+    # Heartbeat scheduler (scheduler.py) — runs heartbeat.py as part of
+    # the MCP service's own lifecycle, not a separate cron job. Can be
+    # disabled entirely without code changes.
+    heartbeat_enabled: bool = os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true"
+    # Gap between cycles beyond the model's own response time (~20-40s
+    # per cycle) — deliberately small; the tripwire in heartbeat.py
+    # (distress/repetition detection, auto-pause) is the real safeguard
+    # against a bad pattern running away, not a slow clock.
+    heartbeat_min_gap_seconds: int = int(os.getenv("HEARTBEAT_MIN_GAP_SECONDS", "10"))
+    heartbeat_startup_delay_seconds: int = int(os.getenv("HEARTBEAT_STARTUP_DELAY_SECONDS", "10"))
+
     @property
     def data_dir(self) -> Path:
         path = Path(self.vector_db_path).parent

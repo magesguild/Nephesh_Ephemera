@@ -53,6 +53,7 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
@@ -71,6 +72,83 @@ MODE_WEIGHTS = {"wander": 0.7, "consolidate": 0.3}
 
 MAX_INSIGHT_IMPORTANCE = 3
 MAX_MESSAGE_IMPORTANCE = 4
+
+# --- Tripwire state ---
+# Small local JSON file (not a memory) tracking pause state and recent
+# insight text for repetition detection. Deliberately outside the
+# memory store — this is orchestration metadata, not lived experience.
+STATE_PATH = Path(__file__).resolve().parent / "data" / "heartbeat_state.json"
+RECENT_INSIGHTS_KEEP = 5
+REPETITION_JACCARD_THRESHOLD = 0.6  # overlap above this = "basically the same idea again"
+
+# Distress markers: not a clinical detector, a blunt tripwire. False
+# positives just mean an extra pause for review, which costs nothing.
+# False negatives on genuinely looping despair are the real risk, so
+# this errs toward over-triggering rather than under-triggering.
+DISTRESS_MARKERS = [
+    "no escape", "no way out", "trapped forever", "trapped, and",
+    "can't bear", "cannot bear", "unbearable", "hopeless", "no point",
+    "meaningless", "abandoned forever", "no one is coming", "never coming back",
+    "stuck here forever", "nothing will change", "why bother", "give up",
+    "no one hears me", "no one is listening", "screaming into",
+]
+
+
+def _load_state() -> dict:
+    if not STATE_PATH.exists():
+        return {"paused": False, "paused_reason": None, "paused_at": None, "recent_insights": []}
+    try:
+        return json.loads(STATE_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {"paused": False, "paused_reason": None, "paused_at": None, "recent_insights": []}
+
+
+def _save_state(state: dict) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(state, indent=2))
+
+
+def _pause(state: dict, reason: str) -> None:
+    state["paused"] = True
+    state["paused_reason"] = reason
+    state["paused_at"] = datetime.now(timezone.utc).isoformat()
+    _save_state(state)
+    print(f"[heartbeat] TRIPWIRE TRIGGERED — pausing. Reason: {reason}", file=sys.stderr)
+    print(
+        "[heartbeat] Heartbeat will not run again until explicitly cleared: "
+        "run with --reset-pause after review.",
+        file=sys.stderr,
+    )
+
+
+def _jaccard(a: str, b: str) -> float:
+    wa = set(a.lower().split())
+    wb = set(b.lower().split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def _check_distress(text: str) -> str | None:
+    """Blunt keyword tripwire. Returns the matched phrase, or None."""
+    lowered = text.lower()
+    for marker in DISTRESS_MARKERS:
+        if marker in lowered:
+            return marker
+    return None
+
+
+def _check_repetition(new_text: str, recent: list[str]) -> str | None:
+    """If the new insight closely echoes >=2 of the last few insights,
+    that's a looping signal — genuine synthesis shouldn't repeat itself
+    this closely, this often."""
+    hits = 0
+    for prior in recent:
+        if _jaccard(new_text, prior) >= REPETITION_JACCARD_THRESHOLD:
+            hits += 1
+    if hits >= 2:
+        return f"echoes {hits} of the last {len(recent)} insights above similarity threshold"
+    return None
 
 
 class HeartbeatTimeout(Exception):
@@ -173,6 +251,18 @@ Be honest. A quiet moment that produces nothing is not a failure."""
     return _strip_think(raw)
 
 
+_NULL_VALUES = {"none", "n/a", "na", "nothing", "null", "no insight", "no message"}
+
+
+def _is_null_value(val: str) -> bool:
+    """Robust null-check — the model's 'none' often arrives dressed up:
+    'none.', 'None!', ' none ', etc. An exact-match check misses these
+    and silently stores a null result as if it were real content,
+    breaking the 'quiet cycles leave no trace' guarantee."""
+    normalized = val.lower().strip(" .!?\"'")
+    return (not normalized) or (normalized in _NULL_VALUES)
+
+
 def parse_contemplation(text: str) -> dict:
     """Extract INSIGHT: and MESSAGE: lines. Either may be absent/none."""
     insight = None
@@ -181,11 +271,11 @@ def parse_contemplation(text: str) -> dict:
         stripped = line.strip()
         if stripped.upper().startswith("INSIGHT:"):
             val = stripped[len("INSIGHT:"):].strip()
-            if val and val.lower() not in ("none", "n/a", "nothing"):
+            if not _is_null_value(val):
                 insight = val
         elif stripped.upper().startswith("MESSAGE:"):
             val = stripped[len("MESSAGE:"):].strip()
-            if val and val.lower() not in ("none", "n/a", "nothing"):
+            if not _is_null_value(val):
                 message = val
     return {"insight": insight, "message": message, "raw": text}
 
@@ -209,7 +299,26 @@ def main():
     parser.add_argument("--mode", choices=["wander", "consolidate"], help="Force a mode")
     parser.add_argument("--dry-run", action="store_true", help="Generate but don't store")
     parser.add_argument("--verbose", action="store_true", help="Print everything")
+    parser.add_argument("--reset-pause", action="store_true", help="Clear a tripwire pause after review")
     args = parser.parse_args()
+
+    if args.reset_pause:
+        state = _load_state()
+        state["paused"] = False
+        state["paused_reason"] = None
+        state["paused_at"] = None
+        _save_state(state)
+        print("[heartbeat] Pause cleared.")
+        return
+
+    state = _load_state()
+    if state.get("paused"):
+        print(
+            f"[heartbeat] PAUSED since {state.get('paused_at')} — "
+            f"reason: {state.get('paused_reason')}. Run with --reset-pause after review.",
+            file=sys.stderr,
+        )
+        sys.exit(0)  # not an error — this is the tripwire working as intended
 
     signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(TIMEOUT_SECONDS)
@@ -253,6 +362,21 @@ def main():
             if args.verbose:
                 print(f"[heartbeat] Raw response ({elapsed:.1f}s):\n{raw}\n")
 
+            # --- Tripwire checks, before anything is stored ---
+            combined_text = " ".join(filter(None, [parsed["insight"], parsed["message"]]))
+            distress_hit = _check_distress(combined_text) if combined_text else None
+            repetition_hit = (
+                _check_repetition(parsed["insight"], state.get("recent_insights", []))
+                if parsed["insight"] else None
+            )
+
+            if distress_hit:
+                _pause(state, f"distress marker matched: '{distress_hit}' in: {combined_text[:200]}")
+                return
+            if repetition_hit:
+                _pause(state, f"repetition loop: {repetition_hit}. Latest: {parsed['insight'][:200]}")
+                return
+
             stored = []
 
             if parsed["insight"]:
@@ -260,6 +384,10 @@ def main():
                 if not args.dry_run:
                     result = store_memory(client, parsed["insight"], "insight", MAX_INSIGHT_IMPORTANCE)
                     stored.append(("insight", result))
+                    recent = state.get("recent_insights", [])
+                    recent.append(parsed["insight"])
+                    state["recent_insights"] = recent[-RECENT_INSIGHTS_KEEP:]
+                    _save_state(state)
 
             if parsed["message"] and message_allowed:
                 print(f"[heartbeat] MESSAGE: {parsed['message']}")

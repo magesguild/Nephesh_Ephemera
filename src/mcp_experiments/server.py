@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from mcp.server.fastmcp import FastMCP
 
 from .config import settings
+from .scheduler import lifespan as heartbeat_lifespan
 from .tools import register_all, get_registered_names
 from .tools.vector_db import init as init_vector_db
 from .web_ui import register_web_ui
@@ -19,6 +20,7 @@ mcp = FastMCP(
     instructions="Multi-purpose MCP server for exploring vector DB, Slack, ClickUp, and email integrations",
     host=HOST,
     port=PORT,
+    lifespan=heartbeat_lifespan,
 )
 
 
