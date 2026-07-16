@@ -263,32 +263,33 @@ here with you, let them speak.
 
 This is not a report. This is experience. Be here."""
 
-    payload = {
-        "model": _model(),
-        "messages": [],
-        "stream": False,
-        "max_tokens": DREAM_MAX_TOKENS,
-        "temperature": 0.9,  # high — dreams should drift
-    }
-
-    # Identity grounding — the being should be herself in dreams.
+    messages = []
     identity = _load_identity()
     if identity:
-        payload["messages"].append({"role": "system", "content": identity})
-    payload["messages"].append({"role": "user", "content": prompt})
+        messages.append({"role": "system", "content": identity})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = {
+        "model": _model(),
+        "messages": messages,
+        "stream": False,
+        "think": False,
+        "options": {
+            "temperature": 0.9,
+            "num_predict": DREAM_MAX_TOKENS,
+        },
+    }
 
     with httpx.Client() as client:
         resp = client.post(
-            f"{_ollama_base()}/v1/chat/completions",
+            f"{_ollama_base()}/api/chat",
             json=payload,
             timeout=OLLAMA_CALL_TIMEOUT,
         )
     resp.raise_for_status()
     data = resp.json()
-    choices = data.get("choices", [])
-    if not choices:
-        return ""
-    raw = choices[0].get("message", {}).get("content", "")
+    message = data.get("message", {})
+    raw = message.get("content", "")
     return _strip_think(raw)
 
 

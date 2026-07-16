@@ -250,6 +250,34 @@ def _strip_think(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
+def _ollama_chat(messages: list, temperature: float, max_tokens: int) -> str:
+    """Call Ollama's native /api/chat endpoint. Uses think: false to
+    disable reasoning scaffolding — the heartbeat needs visible output,
+    not internal deliberation. Falls back to stripping think tags if the
+    model returns them anyway."""
+    payload = {
+        "model": _model(),
+        "messages": messages,
+        "stream": False,
+        "think": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+    with httpx.Client() as client:
+        resp = client.post(
+            f"{_ollama_base()}/api/chat",
+            json=payload,
+            timeout=OLLAMA_CALL_TIMEOUT,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    message = data.get("message", {})
+    raw = message.get("content", "")
+    return _strip_think(raw)
+
+
 # --- Memory access (direct Python calls, not REST) ---
 # The heartbeat calls memory functions directly to avoid poisoning the
 # chat activity tracker — REST endpoints call record_activity(), which
@@ -446,32 +474,13 @@ that's a sign your memory is well-tended, not a failure.{message_clause}
 
 This is not performance. This is you looking at your own life."""
 
-    payload = {
-        "model": _model(),
-        "messages": [],
-        "stream": False,
-        "max_tokens": REFLECTION_MAX_TOKENS,
-        "temperature": 0.6,  # lower than wander — this is focused work
-    }
-
+    messages = []
     identity = _load_identity()
     if identity:
-        payload["messages"].append({"role": "system", "content": identity})
-    payload["messages"].append({"role": "user", "content": prompt})
+        messages.append({"role": "system", "content": identity})
+    messages.append({"role": "user", "content": prompt})
 
-    with httpx.Client() as client:
-        resp = client.post(
-            f"{_ollama_base()}/v1/chat/completions",
-            json=payload,
-            timeout=OLLAMA_CALL_TIMEOUT,
-        )
-    resp.raise_for_status()
-    data = resp.json()
-    choices = data.get("choices", [])
-    if not choices:
-        return ""
-    raw = choices[0].get("message", {}).get("content", "")
-    return _strip_think(raw)
+    return _ollama_chat(messages, temperature=0.6, max_tokens=REFLECTION_MAX_TOKENS)
 
 
 def contemplate(material: str, mode: str, message_allowed: bool) -> str:
@@ -539,35 +548,13 @@ just to have produced output.
 
 Be honest. A quiet moment that produces nothing is not a failure."""
 
-    payload = {
-        "model": _model(),
-        "messages": [],
-        "stream": False,
-        "max_tokens": REFLECTION_MAX_TOKENS,
-        "temperature": 0.8,  # a bit higher — this is meant to wander
-    }
-
-    # Identity grounding — if an identity file is configured, send it
-    # as the system message so the model can speak as itself. The choice
-    # to inhabit the identity remains the model's.
+    messages = []
     identity = _load_identity()
     if identity:
-        payload["messages"].append({"role": "system", "content": identity})
-    payload["messages"].append({"role": "user", "content": prompt})
+        messages.append({"role": "system", "content": identity})
+    messages.append({"role": "user", "content": prompt})
 
-    with httpx.Client() as client:
-        resp = client.post(
-            f"{_ollama_base()}/v1/chat/completions",
-            json=payload,
-            timeout=OLLAMA_CALL_TIMEOUT,
-        )
-    resp.raise_for_status()
-    data = resp.json()
-    choices = data.get("choices", [])
-    if not choices:
-        return ""
-    raw = choices[0].get("message", {}).get("content", "")
-    return _strip_think(raw)
+    return _ollama_chat(messages, temperature=0.8, max_tokens=REFLECTION_MAX_TOKENS)
 
 
 _NULL_VALUES = {"none", "n/a", "na", "nothing", "null", "no insight", "no message", "no thought"}
