@@ -118,6 +118,10 @@ OLLAMA_CALL_TIMEOUT = 75
 REFLECTION_MAX_TOKENS = 300
 SAMPLE_SIZE = 8
 
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 # Wander mode favored over consolidate — divergence is the growth
 # engine here; consolidation is maintenance.
 MODE_WEIGHTS = {"wander": 0.7, "consolidate": 0.3}
