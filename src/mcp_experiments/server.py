@@ -9,10 +9,16 @@ from mcp.server.fastmcp import FastMCP
 from .config import settings
 from .tools import register_all, get_registered_names
 from .tools.vector_db import init as init_vector_db
+from .web_ui import register_web_ui
+
+HOST = "127.0.0.1"
+PORT = 8080
 
 mcp = FastMCP(
     "mcp-experiments",
     instructions="Multi-purpose MCP server for exploring vector DB, Slack, ClickUp, and email integrations",
+    host=HOST,
+    port=PORT,
 )
 
 
@@ -34,9 +40,7 @@ def run() -> None:
     )
 
     register_all(mcp)
-
-    host = "127.0.0.1"
-    port = 8080
+    register_web_ui(mcp)
 
     print(
         f"MCP Experiments server starting in {settings.server_mode.value} mode",
@@ -44,9 +48,9 @@ def run() -> None:
     )
     print(f"  Vector DB: {settings.vector_db_path}", file=sys.stderr)
     print(f"  Embedding: {settings.embedding_model} @ {settings.embedding_base_url}", file=sys.stderr)
-    print(f"  Listening: {host}:{port}", file=sys.stderr)
+    print(f"  Listening: {HOST}:{PORT}", file=sys.stderr)
 
-    mcp.run(transport="sse", host=host, port=port)
+    mcp.run(transport="sse")
 
 
 if __name__ == "__main__":

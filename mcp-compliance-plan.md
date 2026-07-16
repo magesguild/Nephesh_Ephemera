@@ -262,22 +262,23 @@ per-session state lives on the server.
 
 ### Vector Database: Prototype to Production
 
-| Dimension | ChromaDB (current) | Qdrant | Weaviate | Pinecone |
-|-----------|-------------------|--------|----------|----------|
-| Scale | ~1M vectors/node | ~10M+/node | ~10M+/node | Unlimited (SaaS) |
-| HA/Replication | None built-in | Native Raft | Native | Managed |
-| Hybrid search | No | BM25 + dense | BM25 + dense | No |
-| Multi-node | No | Yes | Yes | Managed |
-| Filters | Scan-based | Indexed | Indexed | Indexed |
-| Self-host | pip install | Docker | Docker | N/A |
-| Auth/RBAC | None | API key + TLS | API key + OIDC | API key |
+| Dimension | LanceDB (current) | Qdrant | Weaviate | Pinecone |
+|-----------|--------------------|--------|----------|----------|
+| Scale | ~1M-10M vectors | ~10M+/node | ~10M+/node | Unlimited (SaaS) |
+| HA/Replication | Object-store replication | Native Raft | Native | Managed |
+| Hybrid search | Full-text + vector (native) | BM25 + dense | BM25 + dense | No |
+| Multi-node | Stateless compute + shared storage | Yes | Yes | Managed |
+| Filters | Post-filter (Python-side) | Indexed | Indexed | Indexed |
+| Self-host | pip install (local) or S3 | Docker | Docker | N/A |
+| Versioning | Native (every write) | None | None | None |
 
-**Qdrant** is the strongest self-hosted option — Rust-based, fast, hybrid
-search (dense + BM25), native raft replication, proper auth. The API concepts
-map 1:1 with ChromaDB, so migration is straightforward.
+**LanceDB** is the current backend. Its append-only, columnar design eliminates
+index rebuilds and stores raw data alongside vectors — a good fit for the
+personal MCP server's mix of docs, messages, and files.
 
-**Weaviate** if you want built-in modules (generative search, summarization,
-classification via GraphQL). More opinionated, more batteries-included.
+**Qdrant** is the strongest self-hosted option for regulated production —
+Rust-based, fast, hybrid search (dense + BM25), native raft replication, proper
+auth, and indexed filtering.
 
 **Pinecone** if you want zero ops and have the budget. Lock-in risk, but the
 fastest path to production.
@@ -294,12 +295,55 @@ Our compliance layer sketches the concept; production requires:
 - **Just-In-Time (JIT) authorization** — tools authorized per-call against an
   external Policy Decision Point (OPA, Cedar, Auth0 FGA), not a static token check
 
+### Debugging & Observability Tooling
+
+Before moving to production, we need a plan for observing and debugging MCP
+server traffic in live environments.
+
+#### Development / PoC (Current Phase)
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| **MCP Inspector** | Test client — tool schemas, raw JSON-RPC, manifest validation | `npx @modelcontextprotocol/inspector` |
+| **Custom debug UI** | Operational views — collections, search, ingest (already built at `/debug`) | Built-in |
+| **`fastmcp dev`** | Convenience wrapper — launches server + Inspector | `fastmcp dev server.py` |
+
+Inspector validates that the server speaks MCP correctly. Our custom UI
+exercises the same Python functions directly without transport overhead.
+These are complementary, not competing.
+
+#### Production (Future)
+
+| Need | Tool | Notes |
+|------|------|-------|
+| **Observe live traffic** | **mcp-devtools** (proxy mode) | Sits between real client and server, records everything without altering behavior |
+| **Latency profiling** | **mcp-devtools** | Per-tool p50/p95/p99 histograms |
+| **Cost attribution** | **mcp-devtools** | Per-call token cost tracking (critical for paid model proxies) |
+| **Session forensics** | **mcp-devtools** (.mcptrace) | Record, replay, diff, time-travel to any protocol state |
+| **CI regression testing** | Inspector `--cli` mode or **mcp-probe** `test` | Contract tests: "does the server still speak MCP after deploy?" |
+| **Hot-reload dev** | **reloaderoo** (proxy mode) | Transparent proxy with file-watching restart |
+
+#### Key Limitation
+
+Inspector is a *test client*, not a wiretap. It sees its own sessions, not
+real client traffic. Production observability **requires a proxy layer**
+(mcp-devtools or reloaderoo) in the request path. No tool currently provides
+enterprise-grade audit trails natively — that must be built into the server
+or gateway (see `COMPLIANT_AUDIT_LOG` config).
+
+#### Action Items (for production phase)
+
+- [ ] Evaluate mcp-devtools in proxy mode against this server
+- [ ] Build request-level observability (latency, cost, error rates) into server
+- [ ] Add `.mcptrace` recording capability for forensics
+- [ ] Set up Inspector `--cli` mode in CI for MCP contract testing
+
 ### Migration Path
 
 | Phase | Server | Vector DB | Auth | Transport |
 |-------|--------|-----------|------|-----------|
-| Weekend project (current) | FastMCP standalone | ChromaDB | None / env var | SSE |
-| Team pilot | FastMCP + custom middleware | ChromaDB or Qdrant | Bearer token + scopes | SSE |
+| Personal server (current) | FastMCP standalone | LanceDB (local) | None / env var | SSE |
+| GPU cloud pilot | FastMCP on GPU instance | LanceDB (S3) | Bearer token + scopes | SSE |
 | Production regulated | Gateway + backend servers | Qdrant/Pinecone | OAuth 2.1 + PKCE + mTLS | Streamable HTTP |
 | Enterprise multi-tenant | Gateway + mesh | Qdrant cluster | OAuth 2.1 + JIT + OPA | Streamable HTTP |
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Standalone vector DB stress test. Can run directly against ChromaDB (higher
-throughput) or against a running MCP server via SSE/HTTP.
+Standalone vector DB stress test. Can run directly against LanceDB (higher
+throughput with random vectors) or against a running MCP server via its tools.
 """
 
 from __future__ import annotations
@@ -9,15 +9,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import random
 import sys
 import time
 from pathlib import Path
 
 try:
-    import chromadb
+    import lancedb
+    import pyarrow as pa
 except ImportError:
-    chromadb = None  # type: ignore
+    lancedb = None  # type: ignore
+    pa = None  # type: ignore
 
 try:
     from mcp_experiments.tools.vector_db import init, search, ingest, delete_collection
@@ -34,6 +37,18 @@ WORDS = [
     "cosine", "similarity", "dimension", "feature", "representation",
 ]
 
+VECTOR_DIM = 1024
+
+
+def _random_vector(dim: int = VECTOR_DIM) -> list[float]:
+    return [random.gauss(0, 1 / math.sqrt(dim)) for _ in range(dim)]
+
+
+def _unit_vector(dim: int = VECTOR_DIM) -> list[float]:
+    vec = _random_vector(dim)
+    norm = math.sqrt(sum(v * v for v in vec))
+    return [v / norm for v in vec]
+
 
 def generate_documents(num: int, words_per_doc: int) -> list[str]:
     return [" ".join(random.choice(WORDS) for _ in range(words_per_doc)) for _ in range(num)]
@@ -42,49 +57,57 @@ def generate_documents(num: int, words_per_doc: int) -> list[str]:
 def test_direct(
     collection: str,
     num_docs: int,
-    words_per_doc: int,
     n_queries: int,
     db_path: str,
     batch_size: int,
 ):
-    if chromadb is None:
-        print("ERROR: chromadb not installed", file=sys.stderr)
+    if lancedb is None:
+        print("ERROR: lancedb not installed", file=sys.stderr)
         sys.exit(1)
 
-    client = chromadb.PersistentClient(path=db_path)
-    try:
-        client.delete_collection(collection)
-    except ValueError:
-        pass
+    random.seed(42)
+    db = lancedb.connect(db_path)
 
-    # Use ChromaDB's default embedding function (all-MiniLM-L6-v2)
-    # rather than Ollama for max throughput
-    collection_handle = client.create_collection(collection)
+    if collection in db.list_tables().tables:
+        db.drop_table(collection)
 
-    docs = generate_documents(num_docs, words_per_doc)
+    TABLE_SCHEMA = pa.schema([
+        pa.field("id", pa.string()),
+        pa.field("text", pa.string()),
+        pa.field("vector", pa.list_(pa.float32(), VECTOR_DIM)),
+        pa.field("metadata_json", pa.string()),
+    ])
+
+    table = db.create_table(collection, schema=TABLE_SCHEMA)
+
+    docs = generate_documents(num_docs, 10)
     ids = [f"direct_{i:08d}" for i in range(num_docs)]
-    metadatas = [{"index": i, "batch": i // batch_size} for i in range(num_docs)]
 
     ingest_start = time.perf_counter()
     for i in range(0, num_docs, batch_size):
         end = min(i + batch_size, num_docs)
-        collection_handle.add(
-            documents=docs[i:end],
-            ids=ids[i:end],
-            metadatas=metadatas[i:end],
-        )
+        batch = [
+            {
+                "id": ids[j],
+                "text": docs[j],
+                "vector": _unit_vector(),
+                "metadata_json": json.dumps({"index": j, "batch": i // batch_size}),
+            }
+            for j in range(i, end)
+        ]
+        table.add(batch)
         _progress("Ingesting", i + batch_size, num_docs)
     ingest_elapsed = time.perf_counter() - ingest_start
 
-    final_count = collection_handle.count()
+    final_count = table.count_rows()
     docs_per_sec = round(final_count / ingest_elapsed, 2) if ingest_elapsed > 0 else 0
     print(f"\nIngested {final_count} docs in {ingest_elapsed:.2f}s ({docs_per_sec} docs/sec)")
 
     search_times: list[float] = []
     for i in range(n_queries):
-        q = " ".join(random.sample(WORDS, 3))
+        q_vec = _unit_vector()
         qs = time.perf_counter()
-        collection_handle.query(query_texts=[q], n_results=5)
+        table.search(q_vec).limit(5).to_list()
         search_times.append(time.perf_counter() - qs)
     search_times.sort()
 
@@ -93,7 +116,7 @@ def test_direct(
 
     print(f"\nSearch ({n_queries} queries): avg={avg_s}s  p99={p99_s}s")
 
-    client.delete_collection(collection)
+    db.drop_table(collection)
     print(f"Cleaned up '{collection}'")
 
     return {
@@ -169,21 +192,21 @@ def _progress(label: str, current: int, total: int):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Vector DB stress test")
+    parser = argparse.ArgumentParser(description="LanceDB stress test")
     parser.add_argument("--mode", choices=["direct", "api"], default="direct",
-                        help="'direct' = raw ChromaDB, 'api' = via mcp_experiments internals")
+                        help="'direct' = raw LanceDB (random vectors), 'api' = via mcp_experiments (Ollama embeddings)")
     parser.add_argument("--collection", default="stress_test")
     parser.add_argument("--num-docs", type=int, default=1000)
     parser.add_argument("--words-per-doc", type=int, default=50)
     parser.add_argument("--n-queries", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=100)
-    parser.add_argument("--db-path", default="./data/chromadb")
+    parser.add_argument("--db-path", default="./data/lancedb")
     parser.add_argument("--embedding-model", default="mxbai-embed-large")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
 
     args = parser.parse_args()
 
-    print(f"Vector DB Stress Test")
+    print(f"LanceDB Stress Test")
     print(f"  Mode:      {args.mode}")
     print(f"  Documents: {args.num_docs}")
     print(f"  Words/doc: {args.words_per_doc}")
@@ -194,7 +217,6 @@ def main():
         result = test_direct(
             collection=args.collection,
             num_docs=args.num_docs,
-            words_per_doc=args.words_per_doc,
             n_queries=args.n_queries,
             db_path=args.db_path,
             batch_size=args.batch_size,

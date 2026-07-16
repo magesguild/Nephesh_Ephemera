@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import math
+import random
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-import chromadb
 import httpx
-from chromadb import Documents, EmbeddingFunction, Embeddings
+import lancedb
+import pyarrow as pa
 
 from ..compliance import ComplianceLevel
 
@@ -15,47 +18,60 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
 
-class OllamaEmbeddingFunction(EmbeddingFunction):
+class OllamaEmbeddingFunction:
     def __init__(self, model: str, base_url: str):
         self.model = model
         self.base_url = base_url.rstrip("/")
 
-    def __call__(self, input: Documents) -> Embeddings:
-        results: list[list[float]] = []
-        with httpx.Client(timeout=30.0) as client:
-            for text in input:
-                resp = client.post(
-                    f"{self.base_url}/api/embeddings",
-                    json={"model": self.model, "prompt": text},
-                )
-                resp.raise_for_status()
-                results.append(resp.json()["embedding"])
-        return results
+    def embed(self, text: str) -> list[float]:
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                f"{self.base_url}/api/embeddings",
+                json={"model": self.model, "prompt": text},
+            )
+            resp.raise_for_status()
+            return resp.json()["embedding"]
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed(t) for t in texts]
 
 
-_client_instance: chromadb.ClientAPI | None = None
+_db_connection: lancedb.db.LanceDBConnection | None = None
 _embedding_fn: OllamaEmbeddingFunction | None = None
 
+# mxbai-embed-large produces 1024-dim vectors; fixed-size list is required
+# for LanceDB to recognize the column as a vector column
+_VECTOR_DIM = 1024
 
-def _init_client(db_path: str, model: str, base_url: str) -> None:
-    global _client_instance, _embedding_fn
-    if _client_instance is None:
-        _embedding_fn = OllamaEmbeddingFunction(model=model, base_url=base_url)
-        _client_instance = chromadb.PersistentClient(path=db_path)
+_TABLE_SCHEMA = pa.schema([
+    pa.field("id", pa.string()),
+    pa.field("text", pa.string()),
+    pa.field("vector", pa.list_(pa.float32(), _VECTOR_DIM)),
+    pa.field("metadata_json", pa.string()),
+])
 
 
-def _get_client() -> chromadb.ClientAPI:
-    assert _client_instance is not None, "call init() first"
-    return _client_instance
+def init(db_path: str, model: str, base_url: str) -> None:
+    global _db_connection, _embedding_fn
+    _db_connection = lancedb.connect(db_path)
+    _embedding_fn = OllamaEmbeddingFunction(model=model, base_url=base_url)
 
 
-def _get_embedding_fn() -> OllamaEmbeddingFunction:
+def _get_db() -> lancedb.db.LanceDBConnection:
+    assert _db_connection is not None, "call init() first"
+    return _db_connection
+
+
+def _get_ef() -> OllamaEmbeddingFunction:
     assert _embedding_fn is not None, "call init() first"
     return _embedding_fn
 
 
-def init(db_path: str, model: str, base_url: str) -> None:
-    _init_client(db_path, model, base_url)
+def _ensure_table(name: str) -> lancedb.table.Table:
+    db = _get_db()
+    if name in db.list_tables().tables:
+        return db.open_table(name)
+    return db.create_table(name, schema=_TABLE_SCHEMA)
 
 
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
@@ -70,54 +86,76 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
     return chunks
 
 
+def _matches_filter(metadata: dict, where: dict) -> bool:
+    for key, value in where.items():
+        if key == "$and":
+            if not all(_matches_filter(metadata, sub) for sub in value):
+                return False
+        elif key == "$or":
+            if not any(_matches_filter(metadata, sub) for sub in value):
+                return False
+        elif isinstance(value, dict):
+            for op, val in value.items():
+                if op == "$gte" and metadata.get(key, -math.inf) < val:
+                    return False
+                elif op == "$lte" and metadata.get(key, math.inf) > val:
+                    return False
+                elif op == "$ne" and metadata.get(key) == val:
+                    return False
+                elif op == "$eq" and metadata.get(key) != val:
+                    return False
+                elif op == "$in" and metadata.get(key) not in val:
+                    return False
+                elif op == "$nin" and metadata.get(key) in val:
+                    return False
+        else:
+            if metadata.get(key) != value:
+                return False
+    return True
+
+
 async def list_collections() -> str:
-    client = _get_client()
-    collections = client.list_collections()
-    if not collections:
+    db = _get_db()
+    names = sorted(db.list_tables().tables)
+    if not names:
         return json.dumps({"collections": [], "message": "No collections found"})
 
     result = []
-    for c in collections:
-        try:
-            count = c.count()
-        except Exception:
-            count = -1
+    for name in names:
+        table = db.open_table(name)
         result.append({
-            "name": c.name,
-            "document_count": count,
-            "metadata": c.metadata or {},
+            "name": name,
+            "document_count": table.count_rows(),
         })
     return json.dumps({"collections": result}, indent=2)
 
 
 async def collection_info(collection_name: str) -> str:
-    client = _get_client()
-    try:
-        collection = client.get_collection(collection_name, embedding_function=_get_embedding_fn())
-    except ValueError:
+    db = _get_db()
+    if collection_name not in db.list_tables().tables:
         return json.dumps({"error": f"Collection '{collection_name}' not found"})
 
-    count = collection.count()
+    table = db.open_table(collection_name)
+    count = table.count_rows()
+
     sample = []
     if count > 0:
-        sample_results = collection.get(limit=3)
-        sample = [
-            {
-                "id": sample_results["ids"][i],
-                "metadata": (sample_results["metadatas"] or [{}])[i],
-                "document_preview": (
-                    (sample_results["documents"] or [""])[i][:200]
-                    if (sample_results["documents"] or [])
-                    else None
-                ),
-            }
-            for i in range(len(sample_results["ids"]))
-        ]
+        try:
+            sample_data = table.search().limit(3).to_list()
+            sample = [
+                {
+                    "id": r["id"],
+                    "metadata": json.loads(r.get("metadata_json", "{}")),
+                    "document_preview": r.get("text", "")[:200],
+                }
+                for r in sample_data
+            ]
+        except Exception:
+            pass
 
     return json.dumps({
         "name": collection_name,
         "document_count": count,
-        "metadata": collection.metadata or {},
         "sample_documents": sample,
     }, indent=2)
 
@@ -128,7 +166,7 @@ async def ingest(
     metadata: list[dict[str, Any]] | None = None,
     ids: list[str] | None = None,
 ) -> str:
-    client = _get_client()
+    table = _ensure_table(collection_name)
 
     if metadata and len(metadata) != len(documents):
         return json.dumps({
@@ -136,15 +174,7 @@ async def ingest(
             "ingested": 0,
         })
 
-    collection = client.get_or_create_collection(
-        name=collection_name,
-        embedding_function=_get_embedding_fn(),
-        metadata={"created": datetime.now(timezone.utc).isoformat()},
-    )
-
-    all_chunks: list[str] = []
-    all_metadatas: list[dict] = []
-    all_ids: list[str] = []
+    all_records: list[dict[str, Any]] = []
     total_docs = 0
 
     for i, doc in enumerate(documents):
@@ -153,25 +183,25 @@ async def ingest(
             "doc_index": str(i),
             "chunks": str(len(chunks)),
         }
+
         for j, chunk in enumerate(chunks):
             chunk_id = (ids[i] + f"_chunk{j}") if ids else str(uuid.uuid4())
-            all_chunks.append(chunk)
-            all_metadatas.append(doc_meta | {"chunk_index": str(j)})
-            all_ids.append(chunk_id)
+            all_records.append({
+                "id": chunk_id,
+                "text": chunk,
+                "vector": _get_ef().embed(chunk),
+                "metadata_json": json.dumps(doc_meta | {"chunk_index": str(j)}),
+            })
         total_docs += 1
 
-    if all_chunks:
-        collection.add(
-            documents=all_chunks,
-            metadatas=all_metadatas,
-            ids=all_ids,
-        )
+    if all_records:
+        table.add(all_records)
 
     return json.dumps({
         "collection": collection_name,
         "documents_ingested": total_docs,
-        "chunks_created": len(all_chunks),
-        "total_in_collection": collection.count(),
+        "chunks_created": len(all_records),
+        "total_in_collection": table.count_rows(),
     }, indent=2)
 
 
@@ -181,30 +211,30 @@ async def search(
     n_results: int = 10,
     filter_metadata: dict[str, Any] | None = None,
 ) -> str:
-    client = _get_client()
-    n_results = min(n_results, 100)
-
-    try:
-        collection = client.get_collection(collection_name, embedding_function=_get_embedding_fn())
-    except ValueError:
+    db = _get_db()
+    if collection_name not in db.list_tables().tables:
         return json.dumps({"error": f"Collection '{collection_name}' not found"})
 
-    results = collection.query(
-        query_texts=[query],
-        n_results=n_results,
-        where=filter_metadata,
-        include=["documents", "metadatas", "distances"],
-    )
+    table = db.open_table(collection_name)
+    n_results = min(n_results, 100)
+    query_vector = _get_ef().embed(query)
+
+    overfetch = 3 if filter_metadata else 1
+    results = table.search(query_vector).limit(n_results * overfetch).to_list()
 
     hits = []
-    if results["ids"] and results["ids"][0]:
-        for i, doc_id in enumerate(results["ids"][0]):
-            hits.append({
-                "id": doc_id,
-                "score": round(1.0 - (results["distances"][0][i] if results["distances"] else 0), 4),
-                "document_preview": (results["documents"][0][i][:500] if results["documents"] else ""),
-                "metadata": (results["metadatas"][0][i] if results["metadatas"] else {}),
-            })
+    for r in results:
+        meta = json.loads(r.get("metadata_json", "{}"))
+        if filter_metadata and not _matches_filter(meta, filter_metadata):
+            continue
+        hits.append({
+            "id": r["id"],
+            "score": round(1.0 - r.get("_distance", 0), 4),
+            "document_preview": r.get("text", "")[:500],
+            "metadata": meta,
+        })
+        if len(hits) >= n_results:
+            break
 
     return json.dumps({
         "query": query,
@@ -215,27 +245,28 @@ async def search(
 
 
 async def delete_collection(collection_name: str) -> str:
-    client = _get_client()
+    db = _get_db()
     try:
-        client.delete_collection(collection_name)
+        db.drop_table(collection_name)
         return json.dumps({"deleted": True, "collection": collection_name})
-    except ValueError as e:
+    except Exception as e:
         return json.dumps({"error": str(e)})
 
 
 async def delete_documents(collection_name: str, ids: list[str]) -> str:
-    client = _get_client()
-    try:
-        collection = client.get_collection(collection_name, embedding_function=_get_embedding_fn())
-    except ValueError:
+    db = _get_db()
+    if collection_name not in db.list_tables().tables:
         return json.dumps({"error": f"Collection '{collection_name}' not found"})
 
-    collection.delete(ids=ids)
+    table = db.open_table(collection_name)
+    id_list = ", ".join(f"'{i}'" for i in ids)
+    table.delete(f"id IN ({id_list})")
+
     return json.dumps({
         "deleted": True,
         "collection": collection_name,
         "ids_removed": len(ids),
-        "remaining": collection.count(),
+        "remaining": table.count_rows(),
     }, indent=2)
 
 
@@ -245,16 +276,13 @@ async def stress_test(
     document_length: int = 50,
     n_queries: int = 10,
 ) -> str:
-    import random
-    import time
-
-    client = _get_client()
+    db = _get_db()
     num_documents = min(num_documents, 10000)
+    random.seed(42)
 
-    collection = client.get_or_create_collection(
-        name=collection_name,
-        embedding_function=_get_embedding_fn(),
-    )
+    if collection_name in db.list_tables().tables:
+        db.drop_table(collection_name)
+    table = db.create_table(collection_name, schema=_TABLE_SCHEMA)
 
     words = [
         "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
@@ -262,24 +290,28 @@ async def stress_test(
         "protocol", "model", "agent", "tool", "integration", "pipeline",
         "throughput", "latency", "benchmark", "performance", "scaling",
     ]
-    random.seed(42)
 
     documents: list[str] = []
     for _ in range(num_documents):
         documents.append(" ".join(random.choice(words) for _ in range(document_length)))
 
-    ids = [f"stress_{i:06d}" for i in range(num_documents)]
+    ids_list = [f"stress_{i:06d}" for i in range(num_documents)]
 
     ingest_start = time.perf_counter()
-    batch_size = 100
+    batch_size = 50
     ingested = 0
     for i in range(0, num_documents, batch_size):
         end = min(i + batch_size, num_documents)
-        collection.add(
-            documents=documents[i:end],
-            ids=ids[i:end],
-            metadatas=[{"batch": i // batch_size, "index": j} for j in range(i, end)],
-        )
+        batch = []
+        for j in range(i, end):
+            vec = _get_ef().embed(documents[j])
+            batch.append({
+                "id": ids_list[j],
+                "text": documents[j],
+                "vector": vec,
+                "metadata_json": json.dumps({"batch": i // batch_size, "index": j}),
+            })
+        table.add(batch)
         ingested = end
 
     ingest_elapsed = time.perf_counter() - ingest_start
@@ -288,8 +320,9 @@ async def stress_test(
     search_times: list[float] = []
     for _ in range(n_queries):
         q = " ".join(random.sample(words, 3))
+        q_vec = _get_ef().embed(q)
         q_start = time.perf_counter()
-        collection.query(query_texts=[q], n_results=5)
+        table.search(q_vec).limit(5).to_list()
         search_times.append(time.perf_counter() - q_start)
 
     avg_search = round(sum(search_times) / len(search_times), 4)

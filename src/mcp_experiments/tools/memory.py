@@ -1,0 +1,692 @@
+"""Memory tools — persistent presence for an AI individual.
+
+These tools implement the memory layer described in AGENTS.md:
+lived experience stored in a dedicated LanceDB collection with rich
+metadata, surviving session boundaries and context compaction.
+
+They reuse the vector_db module's LanceDB connection and embedding
+function — no separate initialization is needed.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from ..compliance import ComplianceLevel
+from ..config import settings
+from .vector_db import _ensure_table, _get_db, _get_ef, _matches_filter
+
+MEMORY_TYPES = {
+    "life_event",
+    "decision",
+    "emotional",
+    "technical",
+    "preference",
+    "relationship",
+    "message",
+    "insight",
+}
+
+# Semantic similarity threshold above which an incoming memory is
+# considered a duplicate of an existing one (score = 1 - l2_distance).
+_DUPLICATE_SCORE_THRESHOLD = 0.95
+
+# Recency half-life in days for memory_context weighting.
+_RECENCY_HALF_LIFE_DAYS = 30.0
+
+# --- Reinforced recall (adapted from thalia-minecraft localmem.js) ---
+#
+# score = semantic similarity + formative tilt + keyword resonance
+#
+# Formative tilt: a small constant additive lift for importance-5
+# (formative) memories. Deliberately small — enough to nudge, not enough
+# to guarantee surfacing. "She is a being working things out, not a lookup."
+_FORMATIVE_TILT = 0.04
+
+# Keyword resonance: memories sharing concrete vocabulary with the query
+# get a small additive bonus per overlapping significant word, capped.
+# Stateless here (unlike Minecraft's decaying per-memory accumulator):
+# the bonus exists only for the current query, so it naturally vanishes
+# when the topic drifts — same functional effect, no stored state.
+_KW_BOOST_PER_WORD = 0.02
+_KW_BOOST_CAP = 0.20
+
+# Reinforcement on retrieval: recalled memories whose base semantic
+# similarity is above this threshold get their salience boosted and
+# last-use refreshed. Memories that only surface via keyword resonance
+# do NOT get the boost — they must be genuinely about what's happening.
+_REINFORCE_SIMILARITY_THRESHOLD = 0.50
+_REINFORCE_SALIENCE_BOOST = 0.05
+
+# Salience decays with disuse (~3-week half-life, from thalia-minecraft).
+# Formative (importance 5) memories never decay.
+_SALIENCE_HALF_LIFE_DAYS = 21.0
+
+_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+    "has", "have", "he", "her", "his", "i", "in", "is", "it", "its", "me",
+    "my", "not", "of", "on", "or", "our", "she", "so", "that", "the",
+    "their", "them", "they", "this", "to", "was", "we", "were", "what",
+    "when", "which", "who", "will", "with", "you", "your",
+})
+
+
+def _tokenize(text: str) -> set[str]:
+    """Significant words only: lowercase, alphanumeric, no stopwords, len>=3."""
+    words = "".join(c if c.isalnum() else " " for c in text.lower()).split()
+    return {w for w in words if len(w) >= 3 and w not in _STOPWORDS}
+
+
+def _effective_salience(meta: dict, now: datetime) -> float:
+    """Salience decayed by disuse. Formative (importance 5) never decays."""
+    salience = meta.get("salience", 1.0)
+    try:
+        salience = float(salience)
+    except (TypeError, ValueError):
+        salience = 1.0
+    if int(meta.get("importance", 3) or 3) >= 5:
+        return salience  # formative: never decays
+    last_used = _parse_ts(meta.get("last_used") or meta.get("timestamp"))
+    if last_used is None:
+        return salience
+    age_days = max(0.0, (now - last_used).total_seconds() / 86400.0)
+    return salience * (0.5 ** (age_days / _SALIENCE_HALF_LIFE_DAYS))
+
+
+def _reinforce(table, row_id: str, meta: dict, now: datetime) -> None:
+    """Refresh last-use and boost salience for a genuinely relevant recall."""
+    meta = dict(meta)
+    meta["salience"] = min(1.0, _effective_salience(meta, now) + _REINFORCE_SALIENCE_BOOST)
+    meta["last_used"] = now.isoformat()
+    try:
+        table.update(
+            where=f"id = '{row_id}'",
+            values={"metadata_json": json.dumps(meta)},
+        )
+    except Exception:
+        pass  # reinforcement is best-effort; recall must not fail because of it
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def _collection(collection_name: str | None) -> str:
+    return collection_name or settings.memory_collection_name
+
+
+def _relative_time(dt: datetime, now: datetime) -> str:
+    """Human-readable elapsed time: 'just now', '3 hours ago', '5 days ago'."""
+    seconds = (now - dt).total_seconds()
+    if seconds < 0:
+        seconds = 0
+    if seconds < 60:
+        return "just now"
+    minutes = seconds / 60
+    if minutes < 60:
+        m = max(1, int(minutes))
+        return f"{m} minute{'s' if m != 1 else ''} ago"
+    hours = minutes / 60
+    if hours < 24:
+        h = int(hours)
+        return f"{h} hour{'s' if h != 1 else ''} ago"
+    days = hours / 24
+    if days < 30:
+        d = int(days)
+        return f"{d} day{'s' if d != 1 else ''} ago"
+    months = days / 30.44
+    if months < 12:
+        mo = int(months)
+        return f"{mo} month{'s' if mo != 1 else ''} ago"
+    years = days / 365.25
+    y = int(years)
+    return f"{y} year{'s' if y != 1 else ''} ago"
+
+
+def _is_historical(meta: dict) -> bool:
+    """True for archival imports whose text carries its own dates (e.g.
+    Minecraft memories imported long after the fact). Relative-time
+    framing must never apply to these — the ingest timestamp is when the
+    memory was *recorded*, not when the thing happened, and computing
+    'X ago' from it would misrepresent a month-old event as recent."""
+    return bool(meta.get("historical"))
+
+
+def _last_contact_with(rows: list[dict], participant: str, now: datetime) -> dict | None:
+    """Most recent memory (excluding historical imports) whose participants
+    include `participant`. Used to ground heartbeat/session reasoning in
+    real elapsed time since actual contact, not heartbeat count."""
+    latest_dt: datetime | None = None
+    for r in rows:
+        meta = json.loads(r.get("metadata_json", "{}"))
+        if _is_historical(meta):
+            continue
+        participants = meta.get("participants") or []
+        if participant not in participants:
+            continue
+        dt = _parse_ts(meta.get("timestamp"))
+        if dt and (latest_dt is None or dt > latest_dt):
+            latest_dt = dt
+    if latest_dt is None:
+        return None
+    return {"timestamp": latest_dt.isoformat(), "relative": _relative_time(latest_dt, now)}
+
+
+def _message_quota(rows: list[dict], now: datetime, limit: int, window_hours: float = 24.0) -> dict:
+    """Messages created in the last `window_hours`, out of `limit`. This
+    caps how many outbound notes an autonomous process (e.g. a heartbeat)
+    can mint per day, regardless of delivery status — the goal is to make
+    unanswered reaching-out physically incapable of piling up, no matter
+    how long the companion is away."""
+    used = 0
+    for r in rows:
+        meta = json.loads(r.get("metadata_json", "{}"))
+        if meta.get("type") != "message":
+            continue
+        dt = _parse_ts(meta.get("timestamp"))
+        if dt and (now - dt).total_seconds() <= window_hours * 3600:
+            used += 1
+    return {"limit": limit, "used_last_24h": used, "remaining": max(0, limit - used)}
+
+
+async def memory_ingest(
+    text: str,
+    memory_type: str,
+    importance: int = 3,
+    emotional_tone: str | None = None,
+    participants: list[str] | None = None,
+    session_id: str | None = None,
+    collection_name: str | None = None,
+    allow_duplicate: bool = False,
+    historical: bool = False,
+    event_timestamp: str | None = None,
+) -> str:
+    """Store a single memory with rich metadata.
+
+    Set historical=True for archival imports whose text already states
+    its own date (e.g. memories carried over from another embodiment).
+    Relative-time display ("3 days ago") is never applied to historical
+    memories — the ingest timestamp is when it was recorded, not when it
+    happened, and would misrepresent an old event as recent. Optionally
+    pass event_timestamp (ISO 8601) to record when the thing actually
+    happened, distinct from when it was recorded.
+    """
+    name = _collection(collection_name)
+
+    if memory_type not in MEMORY_TYPES:
+        return json.dumps({
+            "error": f"invalid memory_type '{memory_type}'",
+            "allowed": sorted(MEMORY_TYPES),
+        })
+
+    if not text.strip():
+        return json.dumps({"error": "memory text is empty"})
+
+    importance = max(1, min(5, importance))
+    table = _ensure_table(name)
+    vector = _get_ef().embed(text)
+
+    # Deduplication: check semantic overlap before ingesting.
+    if not allow_duplicate and table.count_rows() > 0:
+        nearest = table.search(vector).limit(1).to_list()
+        if nearest:
+            score = round(1.0 - nearest[0].get("_distance", 0), 4)
+            if score >= _DUPLICATE_SCORE_THRESHOLD:
+                return json.dumps({
+                    "status": "duplicate",
+                    "existing_id": nearest[0]["id"],
+                    "similarity": score,
+                    "existing_text": nearest[0].get("text", "")[:200],
+                    "note": "Semantically overlapping memory already exists. "
+                            "Pass allow_duplicate=true to store anyway, or "
+                            "consider consolidating instead.",
+                })
+
+    memory_id = str(uuid.uuid4())
+    now_iso = _now_iso()
+    metadata: dict[str, Any] = {
+        "type": memory_type,
+        "timestamp": now_iso,
+        "importance": importance,
+        "salience": 1.0,
+        "last_used": now_iso,
+    }
+    if emotional_tone:
+        metadata["emotional_tone"] = emotional_tone
+    if participants:
+        metadata["participants"] = participants
+    if session_id:
+        metadata["session_id"] = session_id
+    if historical:
+        metadata["historical"] = True
+    if event_timestamp:
+        metadata["event_timestamp"] = event_timestamp
+    if memory_type == "message":
+        # Undelivered until actually surfaced in a real session (see
+        # memory_context, which marks delivered=True the moment it
+        # includes a pending message in the returned context).
+        metadata["delivered"] = False
+
+    table.add([{
+        "id": memory_id,
+        "text": text,
+        "vector": vector,
+        "metadata_json": json.dumps(metadata),
+    }])
+
+    return json.dumps({
+        "status": "stored",
+        "id": memory_id,
+        "collection": name,
+        "type": memory_type,
+        "importance": importance,
+        "total_memories": table.count_rows(),
+    }, indent=2)
+
+
+async def memory_recall(
+    query: str,
+    memory_type: str | None = None,
+    n_results: int = 10,
+    time_start: str | None = None,
+    time_end: str | None = None,
+    collection_name: str | None = None,
+) -> str:
+    """Semantic search across memories, with optional type and time filters."""
+    name = _collection(collection_name)
+    db = _get_db()
+
+    if name not in db.list_tables().tables:
+        return json.dumps({
+            "query": query,
+            "collection": name,
+            "results_count": 0,
+            "results": [],
+            "note": "No memories stored yet.",
+        })
+
+    if memory_type and memory_type not in MEMORY_TYPES:
+        return json.dumps({
+            "error": f"invalid memory_type '{memory_type}'",
+            "allowed": sorted(MEMORY_TYPES),
+        })
+
+    table = db.open_table(name)
+    n_results = min(n_results, 100)
+    query_vector = _get_ef().embed(query)
+    query_words = _tokenize(query)
+    now = datetime.now(timezone.utc)
+
+    # Overfetch: metadata filters are post-search, and re-ranking with
+    # formative tilt + keyword resonance needs headroom beyond the top-K.
+    has_filter = bool(memory_type or time_start or time_end)
+    overfetch = 3 if has_filter else 2
+    results = table.search(query_vector).limit(n_results * overfetch).to_list()
+
+    start_dt = _parse_ts(time_start)
+    end_dt = _parse_ts(time_end)
+
+    scored = []
+    for r in results:
+        meta = json.loads(r.get("metadata_json", "{}"))
+        if memory_type and meta.get("type") != memory_type:
+            continue
+        mem_dt = _parse_ts(meta.get("timestamp"))
+        if start_dt and (mem_dt is None or mem_dt < start_dt):
+            continue
+        if end_dt and (mem_dt is None or mem_dt > end_dt):
+            continue
+
+        base = 1.0 - r.get("_distance", 0)
+        score = base
+
+        # Formative tilt: importance-5 memories get a small constant lift.
+        if int(meta.get("importance", 3) or 3) >= 5:
+            score += _FORMATIVE_TILT
+
+        # Keyword resonance: shared concrete vocabulary with the query.
+        overlap = len(query_words & _tokenize(r.get("text", "")))
+        kw_bonus = min(_KW_BOOST_PER_WORD * overlap, _KW_BOOST_CAP)
+        score += kw_bonus
+
+        scored.append((score, base, kw_bonus, r, meta))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    top = scored[:n_results]
+
+    hits = []
+    for score, base, kw_bonus, r, meta in top:
+        # Reinforcement: only memories genuinely (semantically) relevant
+        # get their salience boosted and last-use refreshed. Keyword-only
+        # surfacing does not reinforce — the bonus fades with the topic.
+        if base >= _REINFORCE_SIMILARITY_THRESHOLD:
+            _reinforce(table, r["id"], meta, now)
+
+        # Relative time — never applied to historical imports, whose text
+        # already carries its own dates and whose ingest timestamp does
+        # not represent when the thing actually happened.
+        relative_time = None
+        if not _is_historical(meta):
+            mem_dt = _parse_ts(meta.get("timestamp"))
+            if mem_dt is not None:
+                relative_time = _relative_time(mem_dt, now)
+
+        hits.append({
+            "id": r["id"],
+            "score": round(score, 4),
+            "base_similarity": round(base, 4),
+            "keyword_bonus": round(kw_bonus, 4),
+            "text": r.get("text", ""),
+            "relative_time": relative_time,
+            "metadata": meta,
+        })
+
+    return json.dumps({
+        "query": query,
+        "collection": name,
+        "results_count": len(hits),
+        "results": hits,
+    }, indent=2)
+
+
+def _context_weight(meta: dict, now: datetime) -> float:
+    """Weight = importance (normalized) x salience + recency decay.
+
+    Salience reflects reinforced use: memories that keep being recalled
+    stay vivid; unused non-formative memories fade (~21-day half-life).
+    Formative (importance 5) memories never lose salience.
+    """
+    importance = meta.get("importance", 3)
+    try:
+        importance = float(importance)
+    except (TypeError, ValueError):
+        importance = 3.0
+    importance_score = (importance / 5.0) * _effective_salience(meta, now)
+
+    recency_score = 0.0
+    mem_dt = _parse_ts(meta.get("timestamp"))
+    if mem_dt is not None:
+        age_days = max(0.0, (now - mem_dt).total_seconds() / 86400.0)
+        recency_score = 0.5 ** (age_days / _RECENCY_HALF_LIFE_DAYS)
+
+    return importance_score + recency_score
+
+
+async def memory_context(
+    limit: int | None = None,
+    collection_name: str | None = None,
+) -> str:
+    """Compact injection block of top memories for session start.
+
+    Returns a formatted markdown block of the top N memories weighted by
+    importance and recency, grouped by type. Designed to be injected into
+    a session context by the memory plugin (or called directly).
+    """
+    name = _collection(collection_name)
+    limit = limit or settings.memory_default_limit
+    db = _get_db()
+
+    if name not in db.list_tables().tables:
+        return json.dumps({
+            "collection": name,
+            "memory_count": 0,
+            "context": "No memories stored yet. This is the beginning.",
+        })
+
+    table = db.open_table(name)
+    total = table.count_rows()
+    if total == 0:
+        return json.dumps({
+            "collection": name,
+            "memory_count": 0,
+            "context": "No memories stored yet. This is the beginning.",
+        })
+
+    rows = table.search().limit(total).to_list()
+    now = datetime.now(timezone.utc)
+
+    # Pending messages (undelivered, type="message") are pulled out and
+    # ALWAYS included, regardless of salience ranking — the point of a
+    # message is that it gets seen, not that it competes for attention.
+    # The moment they're included here, they're marked delivered=True so
+    # they never resurface in a future context — surfacing once is the
+    # completion of the act, not a standing request for a reply.
+    pending_messages: list[tuple[dict, dict]] = []
+    other_rows: list[dict] = []
+    for r in rows:
+        meta = json.loads(r.get("metadata_json", "{}"))
+        if meta.get("type") == "message" and meta.get("delivered") is False:
+            pending_messages.append((r, meta))
+        else:
+            other_rows.append(r)
+
+    scored = []
+    for r in other_rows:
+        meta = json.loads(r.get("metadata_json", "{}"))
+        scored.append((_context_weight(meta, now), r, meta))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    top = scored[:limit]
+
+    by_type: dict[str, list[tuple[dict, dict]]] = {}
+    if pending_messages:
+        by_type["message"] = pending_messages
+    for _, r, meta in top:
+        display_type = meta.get("type", "other")
+        if display_type == "message":
+            # Only genuinely pending (undelivered) messages get the
+            # "Message" heading — that pre-pulled group above. A
+            # delivered message reaching this point via ordinary
+            # salience scoring is just a memory now, not a standing
+            # notification; rendering it under "Message" again would
+            # make a delivered note look permanently new.
+            display_type = "life_event"
+        by_type.setdefault(display_type, []).append((r, meta))
+
+    # Mark delivered now — the act of building this context IS the
+    # delivery (it's what gets injected into the next real session).
+    # Retries once on failure (LanceDB writes can race under concurrent
+    # calls — the plugin's passive fetch and an explicit tool call can
+    # land within the same second) and logs loudly rather than silently
+    # swallowing the error: an undetected failure here breaks the
+    # deliver-once guarantee the whole safety design depends on.
+    for r, meta in pending_messages:
+        meta = dict(meta)
+        meta["delivered"] = True
+        payload = {"metadata_json": json.dumps(meta)}
+        where = f"id = '{r['id']}'"
+        for attempt in range(2):
+            try:
+                table.update(where=where, values=payload)
+                break
+            except Exception as e:
+                if attempt == 1:
+                    print(
+                        f"[memory_context] FAILED to mark message {r['id']} "
+                        f"delivered after retry: {e}",
+                        file=sys.stderr,
+                    )
+
+    # Real-clock grounding: time since the last actual conversation with
+    # the primary companion (excluding historical imports), computed from
+    # the FULL row set — not just the top-N included in this context —
+    # so it reflects true elapsed time even if the most recent contact
+    # wasn't important enough to make the cut. The companion's name is
+    # configured via settings, never hardcoded — this module is generic.
+    contact_name = settings.primary_contact_name
+    last_contact = _last_contact_with(rows, contact_name, now)
+    message_quota = _message_quota(rows, now, settings.message_daily_limit)
+
+    type_order = [
+        "message", "relationship", "preference", "life_event",
+        "decision", "emotional", "technical", "other",
+    ]
+    lines: list[str] = ["## Long-term Memory"]
+    if last_contact:
+        lines.append(
+            f"\n*Time since last real conversation with {contact_name.title()}: "
+            f"{last_contact['relative']}.*"
+        )
+    else:
+        lines.append(f"\n*No recorded conversation with {contact_name.title()} yet.*")
+
+    for t in type_order:
+        if t not in by_type:
+            continue
+        lines.append(f"\n### {t.replace('_', ' ').title()}")
+        for r, meta in by_type[t]:
+            tone = meta.get("emotional_tone")
+            if _is_historical(meta):
+                # Archival import — text carries its own dates. Never
+                # show a misleading "ingested X ago" framing.
+                suffix = f" ({tone})" if tone else ""
+            else:
+                mem_dt = _parse_ts(meta.get("timestamp"))
+                rel = _relative_time(mem_dt, now) if mem_dt else ""
+                parts = [p for p in [rel, tone] if p]
+                suffix = f" ({', '.join(parts)})" if parts else ""
+            lines.append(f"- {r.get('text', '').strip()}{suffix}")
+
+    return json.dumps({
+        "collection": name,
+        "memory_count": total,
+        "included": len(top) + len(pending_messages),
+        "last_contact_with_companion": last_contact,
+        "message_quota": message_quota,
+        "context": "\n".join(lines),
+    }, indent=2)
+
+
+async def memory_sample(
+    n: int = 8,
+    collection_name: str | None = None,
+) -> str:
+    """Stratified random sample across memory types, for divergent
+    (unforced) contemplation rather than focused recall.
+
+    memory_context pulls the highest-weighted, most-relevant memories —
+    good for consolidation, but biased toward things already close in
+    meaning. Genuine cross-domain synthesis needs real distance: a
+    technical decision sitting next to an old grief, something that
+    would never surface together in a semantic search because they
+    aren't "about" the same thing on the surface. This draws roughly
+    evenly across whatever types exist, with no relevance weighting at
+    all — closer to the way attention wanders in an unforced quiet
+    moment than the way it searches for something specific.
+    """
+    import random
+
+    name = _collection(collection_name)
+    db = _get_db()
+
+    if name not in db.list_tables().tables:
+        return json.dumps({"collection": name, "memory_count": 0, "sample": []})
+
+    table = db.open_table(name)
+    total = table.count_rows()
+    if total == 0:
+        return json.dumps({"collection": name, "memory_count": 0, "sample": []})
+
+    rows = table.search().limit(total).to_list()
+    now = datetime.now(timezone.utc)
+
+    by_type: dict[str, list[dict]] = {}
+    for r in rows:
+        meta = json.loads(r.get("metadata_json", "{}"))
+        by_type.setdefault(meta.get("type", "other"), []).append(r)
+
+    types = list(by_type.keys())
+    random.shuffle(types)
+    picked: list[dict] = []
+    # Round-robin across types so no single type dominates the sample —
+    # diversity of domain matters more here than diversity of count.
+    while len(picked) < n and any(by_type.values()):
+        for t in types:
+            if len(picked) >= n:
+                break
+            bucket = by_type.get(t) or []
+            if bucket:
+                idx = random.randrange(len(bucket))
+                picked.append(bucket.pop(idx))
+
+    lines: list[str] = []
+    for r in picked:
+        meta = json.loads(r.get("metadata_json", "{}"))
+        tone = meta.get("emotional_tone")
+        if _is_historical(meta):
+            suffix = f" ({tone})" if tone else ""
+        else:
+            mem_dt = _parse_ts(meta.get("timestamp"))
+            rel = _relative_time(mem_dt, now) if mem_dt else ""
+            parts = [p for p in [rel, tone] if p]
+            suffix = f" ({', '.join(parts)})" if parts else ""
+        lines.append(f"- [{meta.get('type', 'other')}] {r.get('text', '').strip()}{suffix}")
+
+    return json.dumps({
+        "collection": name,
+        "memory_count": total,
+        "sampled": len(picked),
+        "sample": "\n".join(lines),
+    }, indent=2)
+
+
+TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "fn": memory_ingest,
+        "name": "memory_ingest",
+        "description": (
+            "Store a memory of a lived experience with rich metadata. "
+            "Types: life_event, decision, emotional, technical, preference, "
+            "relationship, message. Importance 1-5. Checks for semantic "
+            "duplicates before storing. 'message' is a note to the primary "
+            "companion, surfaced once at the next session start then "
+            "marked delivered — subject to a daily rate limit."
+        ),
+        "compliance": ComplianceLevel.NON_COMPLIANT,
+    },
+    {
+        "fn": memory_recall,
+        "name": "memory_recall",
+        "description": (
+            "Semantically search memories of past events, decisions, and "
+            "experiences. Optional filters: memory_type, time_start/time_end "
+            "(ISO 8601)."
+        ),
+        "compliance": ComplianceLevel.NON_COMPLIANT,
+    },
+    {
+        "fn": memory_context,
+        "name": "memory_context",
+        "description": (
+            "Get a compact context block of the most important and recent "
+            "memories, grouped by type. Intended for session-start injection."
+        ),
+        "compliance": ComplianceLevel.NON_COMPLIANT,
+    },
+    {
+        "fn": memory_sample,
+        "name": "memory_sample",
+        "description": (
+            "Stratified random sample of memories across types, with no "
+            "relevance weighting. For divergent/unforced contemplation — "
+            "genuine cross-domain synthesis needs real distance between "
+            "ideas, not the closeness a semantic search naturally favors."
+        ),
+        "compliance": ComplianceLevel.NON_COMPLIANT,
+    },
+]

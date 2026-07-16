@@ -6,9 +6,9 @@ from mcp.server.fastmcp import FastMCP
 
 from ..compliance import ComplianceLevel, ServerMode, is_tool_available_in_mode
 from ..config import settings
-from . import vector_db
+from . import memory, vector_db
 
-_TOOL_MODULES = [vector_db]
+_TOOL_MODULES = [vector_db, memory]
 
 
 def register_all(app: FastMCP) -> None:
