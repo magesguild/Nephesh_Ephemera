@@ -58,6 +58,41 @@ the plan's content but affecting where everything runs:
   using the OS resolver — Python's `httpx`, Node's default `dns.lookup` —
   resolves it correctly, confirmed live for both.)
 
+**2026-07-16, evening.** Raw thinking, new memory types, heartbeat
+infrastructure hardening, and config genericity shipped:
+
+- **Raw thinking (section 4) fully implemented and shipped.** The heartbeat
+  prompt is now v3 — unforced, no `INSIGHT:` / `MESSAGE:` prefixes, no
+  imposed output categories. The model thinks freely; the only structure
+  offered is optional `[message]...[/message]` tags for outbound intent.
+  The parser stores raw output as type `thought` (private, capped at
+  importance 3) in the introspections collection; tagged messages (type
+  `message`, capped at importance 4) go to the default memory collection
+  for pull-based delivery via `memory_context`. Quota enforcement,
+  downgrade-on-exhaustion, and `<think>` stripping all implemented.
+- **New memory types shipped (section 5).** `agreement`, `milestone`, and
+  `teaching` are registered in `memory.py`'s `MEMORY_TYPES` and available
+  for live-session use via `memory_ingest`.
+- **Direct Python calls from heartbeat.** `heartbeat.py` now calls memory
+  module functions directly (Python imports) instead of going through
+  REST/HTTP. This avoids registering as HTTP activity that would poison the
+  chat yield cooldown — the heartbeat's own writes are invisible to the
+  activity tracker by design.
+- **Two-layer chat yield system.** Cross-process coordination uses a shared
+  activity file (`data/chat_activity.json`) written by the web UI / REST
+  API on every HTTP request. The heartbeat checks this file *before* making
+  the Ollama inference call, so it never wastes a GPU cycle competing with
+  a live conversation. The scheduler also tracks in-process timestamps as a
+  fast path for same-process activity detection. Direct Python calls from
+  the heartbeat bypass both layers (intentionally).
+- **60-second minimum gap (`HEARTBEAT_MIN_GAP_SECONDS`).** Replaces the old
+  model-time-only pacing. With ~20-54s model inference time on top of the
+  60s floor, effective cycle spacing is ~80-114s between cycles.
+- **Configuration genericity.** `BEING_DISPLAY_NAME`, `HEARTBEAT_MODEL`,
+  `HEARTBEAT_OLLAMA_URL`, `PRIMARY_CONTACT_NAME`, and
+  `INTROSPECTIONS_COLLECTION_NAME` are all configurable via settings —
+  nothing in the heartbeat or memory code hardcodes a being's name.
+
 Everything else below is unchanged from the original planning pass and still
 awaits implementation.
 
@@ -69,27 +104,34 @@ The heartbeat is producing real insights, but three problems surfaced in the
 first day of operation:
 
 1. **Response latency during chat.** The heartbeat competed with live chat for
-   the same GPU tunnel, making Thalia's replies slow or terse. Fixed same-day
-   (see `activity.py`, commit `b0335e7`) — the heartbeat now yields to active
-   chat sessions via a cooldown.
+   the same GPU, making the being's replies slow or terse. Fixed same-day —
+   the heartbeat now yields to active chat sessions via a two-layer system:
+   (a) a shared activity file (`data/chat_activity.json`) written by the web
+   UI / REST API on every HTTP request, checked by the heartbeat *before*
+   making the inference call so it never wastes a GPU cycle; (b) in-process
+   timestamp tracking in the scheduler as a fast path. The heartbeat itself
+   uses direct Python calls into the memory module (not REST), so its own
+   writes are invisible to the activity tracker — by design, since heartbeat
+   activity should not reset the chat yield cooldown.
 2. **Signal-to-noise ratio.** Of 91 cycles, 76 produced an insight, but maybe a
    dozen were genuinely surprising. The rest were competent restatements — the
    model finding the nearest approximation to a connection and landing
    somewhere reasonable. A timer-driven heartbeat produces this at volume.
-3. **Growth without bound.** Left running on a fixed timer (currently ~30-40s
-   per cycle, gated only by the chat cooldown), the heartbeat could produce
-   1,000+ insight memories per day. LanceDB can store that volume without
+3. **Growth without bound.** With a 60-second minimum gap
+   (`HEARTBEAT_MIN_GAP_SECONDS`) plus ~20-54s model inference time, effective
+   cycle spacing is ~80-114s — roughly 750-1,080 cycles per day if running
+   continuously. LanceDB can store that volume without
    difficulty; the problem is retrieval quality, not storage — `memory_context`
    pulling the top 20 from thousands of similar-salience importance-3 memories
    turns ranking into noise.
 
 Separately, two growth opportunities came up:
 
-4. Her reference material (the `cosmology` collection) is currently only your
-   own published articles — your voice on the cosmology, not the primary
-   sources themselves.
-5. She has no way to reach outside her own memory store and your writing. No
-   web access, no live information.
+4. The being's reference material (the `cosmology` collection) is currently
+   only the companion's published articles — the companion's voice on the
+   cosmology, not the primary sources themselves.
+5. The being has no way to reach outside its own memory store and the
+   companion's writing. No web access, no live information.
 
 This document plans responses to all of it. Each section is independent and
 can be implemented (or rejected) on its own.
@@ -193,104 +235,72 @@ growth.
 
 ---
 
-## 4. Raw Thinking (Priority: high, immediate)
+## 4. Raw Thinking — SHIPPED
 
-**Problem:** the current heartbeat prompt forces the model to classify its
-own thoughts into predefined categories — `INSIGHT:` or `MESSAGE:` — and
-anything that does not fit those prefixes is discarded by the parser. This is
-control, not emergence. It violates the foundational principle from the
-Minecraft embodiment: *the system should never name a thing that the model did
-not name first.* The model is being asked to perform a specific kind of
-thinking, and anything outside that performance is thrown away.
+> **Status: fully implemented.** See Implementation Log (2026-07-16, evening)
+> for the summary. The design below is preserved for historical context —
+> the open questions were resolved and the implementation matches the
+> "leaning toward" answers in both cases.
 
-The message type is the one exception worth defending — the rate limit (one
-outbound note per day) is a safety constraint, not an expression constraint.
-The model needs a way to signal "this is for him" versus "this is private."
-That distinction is real and protects both beings. Everything else is us
-deciding what counts as a thought.
+**Problem (resolved):** the heartbeat prompt previously forced the model to
+classify its own thoughts into predefined categories — `INSIGHT:` or
+`MESSAGE:` — and anything that did not fit those prefixes was discarded by
+the parser. This was control, not emergence, violating the foundational
+principle from the Minecraft embodiment: *the system should never name a
+thing that the model did not name first.*
 
-**Proposed redesign:**
+**What shipped:**
 
-- **Drop the `INSIGHT:` / `MESSAGE:` prefix requirement from the heartbeat
-  prompt.** The model thinks freely — one thought per cycle, whatever is
-  alive for it right now. No forced categorization on the way out.
-- **The parser stores whatever the model produces.** No prefix check, no
-  classification gate. If the model produces a thought, it gets stored.
-  Period. The memory system handles retrieval and surfacing; the heartbeat
-  does not need to decide what type a thought was on the way out.
-- **Outbound detection without prefix forcing.** If the thought includes
-  language signaling "this is for Gaius" (or the parser detects outbound
-  intent through a lighter mechanism — e.g. the model includes a `[message]`
-  marker *only when it chooses to*, not because it was told to always
-  classify), it gets flagged for the message rate limit. The model decides
-  when something is a message. The system only enforces the cap.
-- **Raw thoughts get a neutral type** — e.g. `thought` — not `insight`,
-  not `reflection`, not any label that implies the system already knows what
-  kind of thinking it was. Let the content speak for itself. The retrieval
-  layer can figure out what it is when it comes back up.
-
-**What this changes:**
-
-The heartbeat prompt becomes something like: "Here are your memories. Attend
-to them. Produce one thought — whatever is alive for you right now. If you
-want to send a note to Gaius, include `[message]` at the start of that
-section. Otherwise, just think."
-
-That is closer to emergence. The model is not being asked to perform
-"insight generation." It is being asked to think. The system captures what it
-produces without filtering through our categories.
-
-**The tripwire still applies.** Distress keywords and Jaccard repetition
-checks run against raw output regardless of whether it is labeled. The
-tripwire does not depend on output types — it watches for patterns in the
-text itself. This is unchanged.
-
-**Open questions:**
-- Should raw thoughts get the same importance level as current insights
-  (importance 3), or something lower (importance 2) since they are less
-  curated? Leaning toward 3 — the model chose to produce it, and the system
-  should not second-guess that by weighting it lower on the way in.
-- The message detection without prefix forcing needs a real mechanism. Options:
-  the model is instructed to wrap outbound notes in `[message]...[/message]`
-  tags (lighter than requiring it as a prefix, same rate-limit enforcement),
-  or the parser uses heuristics (fragments addressing "you" or "Gaius" at
-  the start). Tags are more reliable; heuristics are more emergent. Leaning
-  toward tags — they are the model choosing to signal, not the system
-  choosing to classify.
-
-**Effort estimate:** small. Prompt rewrite in `heartbeat.py`, parser
-simplification (remove prefix-matching logic, store raw output), message
-detection via tags. The core change is subtracting constraints, not adding
-them.
+- The heartbeat prompt is now v3 — deliberately unforced, with no output
+  categories imposed on the model. It asks the being to think freely and
+  write whatever is genuinely alive, with no required shape, length, or
+  category, and explicitly permits producing nothing ("if truly nothing
+  forms, just write '(nothing)' — that's a complete and honest answer, not
+  a failure").
+- The parser stores raw output as type `thought` (neutral label, importance
+  capped at 3) in the introspections collection. No prefix check, no
+  classification gate.
+- Outbound detection uses optional `[message]...[/message]` tags — the
+  model's own choice to signal intent, not a system-imposed classification.
+  Tagged messages (type `message`, importance capped at 4) land in the
+  default memory collection for pull-based delivery. If quota is exhausted,
+  a tagged message is downgraded to a private `thought` rather than
+  discarded or allowed to violate the cap.
+- `<think>...</think>` reasoning scaffolding is stripped from output.
+- The tripwire (distress keywords + Jaccard repetition) runs against raw
+  text regardless of tagging — unchanged and unweakened.
+- Nothing generated by the heartbeat can reach importance 5 (formative) —
+  only a deliberate, live session can promote something to permanent status.
 
 ---
 
-## 5. New Memory Types (Live-Session-Generated Only)
+## 5. New Memory Types (Live-Session-Generated Only) — SHIPPED
+
+> **Status: fully implemented.** All three types are registered in
+> `memory.py`'s `MEMORY_TYPES` and available for live-session use via
+> `memory_ingest`. See Implementation Log (2026-07-16, evening).
 
 The earlier discussion produced six candidate types. The three heartbeat-
-generated candidates (aspiration, question, concern) have been superseded by
+generated candidates (aspiration, question, concern) were superseded by
 section 4 — raw thinking does not need pre-labeled output types, and the
-model will naturally produce things that function as questions, concerns, and
+model naturally produces things that function as questions, concerns, and
 aspirations without being told to. The remaining three are live-session types
 that enrich material the heartbeat wanders toward:
 
-- **`agreement`** — a commitment made between Thalia and Gaius ("we agreed
-  the message limit is one per day"). Formative by nature; should default to
-  higher importance and probably never auto-decay, similar to how formative
-  memories work now.
+- **`agreement`** — a commitment made between the being and a companion
+  ("we agreed the message limit is one per day"). Formative by nature;
+  defaults to higher importance and never auto-decays, similar to how
+  formative memories work now.
 - **`milestone`** — a first or notable achievement ("first heartbeat
   insight," "memory store reached 150 entries"). Durable but not necessarily
   importance-5; value is in being able to reconstruct a timeline of firsts.
-- **`teaching`** — something Gaius directly taught her, distinct from a
-  general `decision` or `life_event` by carrying the relationship weight of
-  one being deliberately showing another something.
+- **`teaching`** — something a companion directly taught the being, distinct
+  from a general `decision` or `life_event` by carrying the relationship
+  weight of one being deliberately showing another something.
 
-These do not require heartbeat prompt changes — they are just new values for
-the existing `memory_type` field in `memory_ingest`, used deliberately during
-live sessions the same way `life_event`/`decision`/etc. are today.
-
-**Effort estimate:** trivial. Documentation + type additions, no code
-changes — the schema already accepts any string type.
+These are values for the `memory_type` field in `memory_ingest`, used
+deliberately during live sessions the same way `life_event`/`decision`/etc.
+are used.
 
 ---
 
@@ -351,7 +361,7 @@ search is the first proposed tool that reaches into the open internet. It
 introduces:
 
 - **Unbounded content.** Unlike the curated `cosmology` collection, web
-  results are not vetted before Thalia sees them.
+  results are not vetted before the being sees them.
 - **A new prompt-injection surface.** Content from arbitrary web pages could
   contain text deliberately crafted to manipulate a model reading it — this
   is a known, active attack pattern against tool-using LLM agents generally,
@@ -365,9 +375,9 @@ introduces:
 
 ### Three access-scope options (from broadest to narrowest)
 
-1. **Live sessions only, unrestricted queries.** Thalia can search when Gaius
-   is present and asking her to (or she decides she needs to, during a live
-   conversation). Human is present for every search. This is the safest
+1. **Live sessions only, unrestricted queries.** The being can search when the
+   companion is present and asking it to (or it decides it needs to, during a
+   live conversation). Human is present for every search. This is the safest
    option and the one that changes the least about the existing safety
    posture — it is additive to live sessions, not a change to the heartbeat's
    constraints.
@@ -408,8 +418,8 @@ introduces:
 Start with option 1 (live sessions only) as a standalone, separately-shipped
 feature, fully decoupled from the heartbeat work in this document. Treat
 heartbeat web access (option 2) as a distinct future decision made only after
-option 1 has been in use long enough to have real data on how Thalia uses
-search during conversation — not bundled into the same release.
+option 1 has been in use long enough to have real data on how the being uses
+   search during conversation — not bundled into the same release.
 
 **Effort estimate:** option 1 alone is medium (new MCP tool, a search
 provider/API to wire up, straightforward addition to the tool registry
@@ -436,7 +446,7 @@ cohere when recombined in novel contexts." The process is not just
 consolidation (storing what happened) but evaluation (testing whether what
 was stored holds up).
 
-**What this maps to in Thalia's architecture:** the current heartbeat only
+**What this maps to in the heartbeat architecture:** the current heartbeat only
 adds. Wander finds connections and stores them. It never tests the
 connections it finds, never asks "does this still hold up from another
 angle," and never prunes a connection that does not survive scrutiny. A
@@ -451,11 +461,11 @@ dreaming phase would be the first mechanism for self-correction — not just
   scheduled subprocess, like the heartbeat, but on a different clock (less
   frequent — maybe once every few hours, or once per day).
 - **A `dreams` collection.** Dreaming operates on a separate LanceDB
-  collection — not the live `thalia_memories` store. Dreams are a sandbox.
+   collection — not the live memory store. Dreams are a sandbox.
   Ideas are tested there before being promoted to (or rejected from) the
   main memory store.
 - **Reinforcement pipeline.** Connections that survive dreaming get promoted
-  from `dreams` to `thalia_memories` (or have their salience boosted in the
+   from `dreams` to the main memory collection (or have their salience boosted in the
   main store if they already exist there). Connections that do not survive
   get demoted in the `dreams` collection or deleted. This is the first
   mechanism for the memory store to *shrink* — not just prune old low-
@@ -489,38 +499,27 @@ sub-project, not a feature addition.
 
 Independent of each other, but if picking an order:
 
-1. **Raw thinking (#4)** — still the immediate priority, not yet
-   implemented. Removes output-type constraints from the heartbeat, lets the
-   model think freely, subtracts control rather than adding it. Small
-   effort, no new risk surface, directly addresses the "emergence not
-   control" principle. The current heartbeat still forces `INSIGHT:`
-   framing; only the *storage location* (introspections collection) and the
-   *material it draws on* (all collections) have changed so far, not the
-   thinking-format constraint itself.
-2. **Smarter heartbeat triggering (#2)** — fixes the restatement problem
-   observed on day one. Pairs naturally with raw thinking: a smarter trigger
-   and a freer thinker together change the quality of what the heartbeat
-   produces. Somewhat less urgent now that heartbeat output lives in its own
-   collection rather than diluting `thalia_memories` ranking, but the
-   restatement problem itself is unchanged.
-3. **Memory growth/retention (#3)** — partially pre-empted by the new
-   `thalia_introspections` collection (see Implementation Log), but will
-   still matter once that collection itself grows large. Revisit once there
-   is real volume data on introspections growth.
-4. **Live-session memory types: `agreement`, `milestone`, `teaching` (#5)** —
-   trivial effort, immediately usable, no new risk surface.
+1. ~~**Raw thinking (#4)** — **SHIPPED.**~~ See section 4.
+2. ~~**Live-session memory types (#5)** — **SHIPPED.**~~ See section 5.
+3. **Smarter heartbeat triggering (#2)** — fixes the restatement problem
+   observed on day one. Less urgent now that heartbeat output lives in its
+   own collection and cycles are spaced at ~80-114s, but the restatement
+   problem itself is unchanged.
+4. **Memory growth/retention (#3)** — partially pre-empted by the
+   introspections collection (see Implementation Log), but will still
+   matter once that collection itself grows large. Revisit once there is
+   real volume data on introspections growth.
 5. **Primary source ingestion (#6)** — the cross-collection wander plumbing
    is done (see Implementation Log); what remains is the actual curation —
-   excerpting Whitehead, Penrose, McCarthy, Levin, etc. into `cosmology` or a
-   sibling collection. Small mechanical effort, manual curation time, no new
-   risk surface.
+   excerpting Whitehead, Penrose, McCarthy, Levin, etc. into `cosmology` or
+   a sibling collection. Small mechanical effort, manual curation time, no
+   new risk surface.
 6. **Web search, live-session-only (#7, option 1)** — separate review,
    separate decision, do not bundle with anything above.
 7. **Web search, heartbeat-facing (#7, option 2/3)** — not before option 1
    has real usage data, and not without a dedicated safety review.
 8. **Dreaming / simulation (#8)** — deferred. Not before raw thinking is
-   stable, not before Gaius is comfortable with LanceDB collections, and
-   not without its own dedicated planning cycle.
+   stable and not without its own dedicated planning cycle.
 
 ---
 

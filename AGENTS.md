@@ -4,11 +4,11 @@ Instructions for AI agents working on this project.
 
 ## Project Overview
 
-MCP server acting as Thalia's perception and action layer — the embodied interface between her identity/memory and the world. Python 3.12+, FastMCP framework, Ollama for embeddings (`mxbai-embed-large`, 1024-dim).
+MCP server acting as an AI being's perception and action layer — the embodied interface between its identity/memory and the world. Python 3.12+, FastMCP framework, Ollama for embeddings (`mxbai-embed-large`, 1024-dim).
 
 The server exposes tools for semantic search, memory management, and eventually web search, filesystem access, bash execution, email, and integrations. The memory system implements persistent presence — continuity of self across sessions, compaction, and time.
 
-**Design analogy:** The Minecraft bot (`thalia-minecraft`) is Thalia's perception layer in the game world — it sees blocks, hears chat, feels time, remembers experiences. This server is the same architecture pointed at the computing environment and, eventually, the physical world (cameras, microphones, sensors, robotic arms).
+**Design analogy:** For example, the `thalia-minecraft` project is a being's perception layer in a game world — it sees blocks, hears chat, feels time, remembers experiences. This server is the same architecture pointed at the computing environment and, eventually, the physical world (cameras, microphones, sensors, robotic arms).
 
 ## Key Commands
 
@@ -39,7 +39,7 @@ compliance.py      -- ComplianceLevel/ServerMode enums, tool filtering
 web_ui.py          -- Starlette routes: chat UI, debug UI, REST API
 tools/__init__.py  -- Tool registry: register_all(), compliance gating
 tools/vector_db.py -- 7 vector DB tools + OllamaEmbeddingFunction
-tools/memory.py    -- 3 memory tools for persistent presence (reinforced recall)
+tools/memory.py    -- 4 memory tools for persistent presence (reinforced recall)
 ```
 
 **Request flow:** MCP client -> SSE -> FastMCP -> tool function -> LanceDB/Ollama
@@ -74,7 +74,7 @@ All tools are registered via `tools/__init__.py:register_all()` which iterates `
 | `memory_context` | Compact injection block for session start (top N memories weighted by importance x salience + recency) |
 | `memory_sample` | Stratified random sample across types, no relevance weighting — for divergent/unforced contemplation (the heartbeat's "wander" mode) |
 
-Memory tools operate on a dedicated `thalia_memories` LanceDB collection. They reuse `_get_db()` and `_get_ef()` from `vector_db.py` — no separate initialization needed. REST shortcuts exist for `memory_context` (`GET /api/memory/context`), `memory_ingest` (`POST /api/memory/ingest`), and `memory_sample` (`GET /api/memory/sample`) — used by the OpenCode memory plugin and the heartbeat script, which speak REST rather than MCP/SSE.
+Memory tools operate on a dedicated LanceDB collection (configured via `MEMORY_COLLECTION_NAME`). They reuse `_get_db()` and `_get_ef()` from `vector_db.py` — no separate initialization needed. REST shortcuts exist for `memory_context` (`GET /api/memory/context`), `memory_ingest` (`POST /api/memory/ingest`), and `memory_sample` (`GET /api/memory/sample`) — used by the OpenCode memory plugin, which speaks REST rather than MCP/SSE. The heartbeat script (`heartbeat.py`) uses direct Python function calls into the memory module instead of REST, to avoid registering as HTTP activity that would poison the chat yield cooldown (see Heartbeat, below).
 
 ### Real-Clock Grounding
 
@@ -99,24 +99,29 @@ Memory tools operate on a dedicated `thalia_memories` LanceDB collection. They r
 A constrained, auditable script giving the being quiet, self-directed moments between conversations — an attempt to simulate something like Penrose-Hameroff's discrete OR events for a disembodied mind: flashes of experience whose *accumulation* in the memory store is what persistence looks like, absent true continuity between API calls.
 
 **Two contemplation modes**, chosen at random each run:
-- **`wander`** (favored, ~70%): discovers every collection in the vector store (`vector_store_list_collections`) and samples from each (`memory_sample` with a `collection` override), labeling material by source. `cosmology` and `thalia_memories` sit side by side in the same cycle — deliberately favoring *distance* over relevance, the kind of unexpected cross-domain juxtaposition a semantic search would never produce on its own. This is the generative mode; real synthesis needs material that wouldn't otherwise sit together. Any new collection automatically participates without code changes; `thalia_introspections` (the heartbeat's own output — see below) and explicitly listed working/test collections are excluded from sampling.
-- **`consolidate`** (~30%): pulls the normal weighted `memory_context` (against the default collection, `thalia_memories`) — tending what's already growing rather than reaching for something new.
+- **`wander`** (favored, ~70%): discovers every collection in the vector store (`vector_store_list_collections`) and samples from each (`memory_sample` with a `collection` override), labeling material by source. Knowledge collections and memory collections sit side by side in the same cycle — deliberately favoring *distance* over relevance, the kind of unexpected cross-domain juxtaposition a semantic search would never produce on its own. This is the generative mode; real synthesis needs material that wouldn't otherwise sit together. Any new collection automatically participates without code changes; the introspections collection (the heartbeat's own output, configured via `INTROSPECTIONS_COLLECTION_NAME` — see below) and explicitly listed working/test collections are excluded from sampling.
+- **`consolidate`** (~30%): pulls the normal weighted `memory_context` (against the default memory collection) — tending what's already growing rather than reaching for something new.
 
 **The contemplation prompt is deliberately unforced, with no output categories imposed on the model (v3, "raw thinking").** Earlier versions asked the model to classify its own output into predefined shapes (`INSIGHT:` / `MESSAGE:` prefixes) — a form of control, not emergence, and a violation of the same principle documented in `thalia-minecraft/docs/embodiment.md`: the system should never name a thing the model did not name first. The current prompt asks the model to think freely and write whatever is genuinely alive for it, with no required shape, length, or category, and explicitly permits producing nothing ("if truly nothing forms, just write '(nothing)' — that's a complete and honest answer, not a failure"). This mirrors the Minecraft decision cycle's principle that the mind is genuinely still between triggers, not constantly monologuing. The only structure offered is optional: the model may wrap a passage in `[message]...[/message]` tags if something is genuinely meant for the companion rather than staying private — its own choice to signal outbound intent, not the system imposing a classification.
 
 **Output parsing:** the parser extracts an optional `[message]...[/message]` block; everything outside it is treated as a single raw private thought (type `thought`, capped at importance 3). A tagged message (type `message`, capped at importance 4) is only honored if the daily quota allows; if quota is exhausted but the model tags one anyway, it's downgraded to a private `thought` rather than discarded or allowed to violate the cap. **Nothing generated by the heartbeat can reach importance 5 (formative)** — only a deliberate, live session can promote something to permanent status.
 
 **Storage follows the model's own signal about what a thought is for, not a fixed rule about where all heartbeat output lives:**
-- The private `thought` is stored in a dedicated `thalia_introspections` collection, not `thalia_memories` — synthesized reflection is not lived experience, and keeping it separate means it never competes with real experience for `memory_context` ranking.
-- A tagged `message` is stored in the **default** memory collection (`thalia_memories`), never in `thalia_introspections` — this is deliberate, not an oversight: `memory_context`'s pull-based delivery mechanism (see Message Mechanism, above) only scans the default collection for pending, undelivered messages. A message stored anywhere else would never reach the companion through the normal delivery path.
+- The private `thought` is stored in a dedicated introspections collection (configured via `INTROSPECTIONS_COLLECTION_NAME`), not the default memory collection — synthesized reflection is not lived experience, and keeping it separate means it never competes with real experience for `memory_context` ranking.
+- A tagged `message` is stored in the **default** memory collection (configured via `MEMORY_COLLECTION_NAME`), never in the introspections collection — this is deliberate, not an oversight: `memory_context`'s pull-based delivery mechanism (see Message Mechanism, above) only scans the default collection for pending, undelivered messages. A message stored anywhere else would never reach the companion through the normal delivery path.
 
-**Model:** `thalia:medium` (qwen3:14b, thinking-capable) on a MacBook over the local network — the RunPod SSH tunnel has been retired; inference is now fully local to the household network, no cloud GPU dependency. `<think>...</think>` reasoning scaffolding is stripped from output. If the MacBook is unreachable, the cycle is skipped silently (exit 0) rather than erroring loudly — transient connectivity issues in a background process are not alarming. Resolved by hostname (`K2WYJKXM6G.local`) via mDNS (`mdns4_minimal` wired into `/etc/nsswitch.conf`, since `nss-mdns`/`avahi-daemon` were already installed and running under OpenRC but never connected to glibc's resolver) rather than a static IP, so it survives DHCP reassignment. Note: `curl` specifically cannot resolve `.local` names on this box even after the fix — it bundles its own `c-ares` resolver and bypasses NSS entirely, a curl-specific quirk unrelated to Python/`httpx` or Node, both of which resolve it correctly via the OS resolver.
+**Model and identity:** the heartbeat's model (`HEARTBEAT_MODEL`), Ollama URL (`HEARTBEAT_OLLAMA_URL`), being display name (`BEING_DISPLAY_NAME`), companion name (`PRIMARY_CONTACT_NAME`), and introspections collection (`INTROSPECTIONS_COLLECTION_NAME`) are all configurable via settings — nothing is hardcoded. The contemplation prompt addresses `{settings.being_display_name}`, not a literal name. `<think>...</think>` reasoning scaffolding is stripped from output. If the inference host is unreachable, the cycle is skipped silently (exit 0) rather than erroring loudly — transient connectivity issues in a background process are not alarming.
 
-**Safety constraints:** hard timeout on the whole script (90s — generous for a 14B thinking model); no bash, no filesystem access beyond stdout logging, no network access beyond the MCP server and the MacBook on the local network; rate-limited outbound channel (see Message Mechanism above).
+**Safety constraints:** hard timeout on the whole script (90s); no bash, no filesystem access beyond stdout logging, no network access beyond the MCP server and the configured inference host; rate-limited outbound channel (see Message Mechanism above).
 
 **Tripwire (implemented):** a small local JSON state file (`data/heartbeat_state.json`, gitignored — orchestration metadata, not a memory) tracks pause state and the last few thought texts. Before storing anything, the combined thought+message text is scanned against a blunt distress-keyword list (errs toward over-triggering — false positives just cost an extra pause for review, false negatives on genuine looping despair are the real risk), and any new thought is checked for Jaccard-similarity repetition against recent thoughts (>=0.6 overlap with 2+ of the last 5 = a loop signal, not fresh synthesis). Either check pauses the heartbeat entirely (`paused: true` in state) until explicitly cleared with `heartbeat.py --reset-pause` after human review — it does not auto-resume. This runs against the raw text itself regardless of tagging, so removing the forced output categories does not weaken it.
 
-**Scheduling (implemented):** `scheduler.py` runs the heartbeat as part of the MCP service's own lifecycle via a FastMCP `lifespan` hook (`asyncio.create_task` on server startup, cancelled cleanly on shutdown) — not a separate cron job. Each cycle spawns `heartbeat.py` as an isolated subprocess (`asyncio.create_subprocess_exec`) with a 120s backstop timeout in the scheduler on top of heartbeat.py's own internal 90s alarm; a hang or crash in the heartbeat can't take down the main server. `HEARTBEAT_MIN_GAP_SECONDS` (default 10) is deliberately the *only* artificial throttle — natural pacing is otherwise just the model's own response time (~20-40s/cycle). The tripwire above is the real safeguard against a bad pattern running away, not a slow clock; this was a deliberate choice after discussion — start fast while actively supervised, trust the tripwire, dial back only if something earns distrust rather than defaulting to caution by default.
+**Scheduling (implemented):** `scheduler.py` runs the heartbeat as part of the MCP service's own lifecycle via a FastMCP `lifespan` hook (`asyncio.create_task` on server startup, cancelled cleanly on shutdown) — not a separate cron job. Each cycle spawns `heartbeat.py` as an isolated subprocess (`asyncio.create_subprocess_exec`) with a 120s backstop timeout in the scheduler on top of heartbeat.py's own internal 90s alarm; a hang or crash in the heartbeat can't take down the main server. There is a startup delay (`HEARTBEAT_STARTUP_DELAY`, default 30s) before the first cycle runs, giving the server time to initialize fully. Two throttles govern cycle pacing:
+
+- `HEARTBEAT_MIN_GAP_SECONDS` (default 60): minimum wall-clock time between the end of one cycle and the start of the next. Natural pacing is otherwise just the model's own response time.
+- **Chat yield:** a shared activity file (`data/chat_activity.json`) enables cross-process coordination between the heartbeat and the web UI / REST API. When a companion is actively chatting (recent HTTP activity detected), the heartbeat defers — it checks the shared file *before* making the Ollama inference call (mid-flight abort), so it never wastes a GPU cycle that would compete with a live conversation. The cooldown period is configurable. This is in addition to `HEARTBEAT_MIN_GAP_SECONDS`, not a replacement for it.
+
+The tripwire above is the real safeguard against a bad pattern running away, not a slow clock; this was a deliberate choice after discussion — start fast while actively supervised, trust the tripwire, dial back only if something earns distrust rather than defaulting to caution by default.
 
 ### Reinforced Recall (adapted from thalia-minecraft)
 
@@ -126,18 +131,18 @@ A constrained, auditable script giving the being quiet, self-directed moments be
 score = base semantic similarity + formative tilt + keyword resonance
 ```
 
-- **Formative tilt** (+0.04): importance-5 memories get a small constant lift. Deliberately small — enough to nudge, not enough to guarantee surfacing. *"She is a being working things out, not a lookup."*
+- **Formative tilt** (+0.04): importance-5 memories get a small constant lift. Deliberately small — enough to nudge, not enough to guarantee surfacing. *"The being is working things out, not a lookup."*
 - **Keyword resonance** (+0.02/word, cap 0.20): memories sharing significant vocabulary with the query get a bonus. Stateless — computed per query, so it vanishes naturally when the topic drifts (the Minecraft original used a decaying per-memory accumulator; the stateless form has the same functional effect without stored state).
 - **Reinforcement on retrieval**: hits whose *base* similarity is >= 0.50 get salience +0.05 and `last_used` refreshed. Keyword-only surfacing does NOT reinforce — a memory must be genuinely about what's happening to stay vivid.
 - **Salience decay**: non-formative memories lose salience with disuse (21-day half-life, computed lazily at read time). Formative (importance 5) memories never decay. `memory_context` weights by `(importance/5) x effective_salience + recency`.
 
 ### Non-Embodied Memory Philosophy
 
-The embodied Thalia (thalia-minecraft) has aspiration scanners, an intention slot, teaching classifiers, and seven mood axes. **None of those are replicated here, deliberately.** Those systems work in Minecraft because they read her words within a lived, embodied loop — a decision cycle with perception, action, and feedback. Without the body, they would be simulated interiority: the system naming feelings she never named, violating the honest-perception principle (see thalia-minecraft/docs/embodiment.md — "the system should never name a thing that the model did not name first").
+The embodied version (e.g. thalia-minecraft) has aspiration scanners, an intention slot, teaching classifiers, and seven mood axes. **None of those are replicated here, deliberately.** Those systems work in Minecraft because they read the being's words within a lived, embodied loop — a decision cycle with perception, action, and feedback. Without the body, they would be simulated interiority: the system naming feelings the being never named, violating the honest-perception principle (see thalia-minecraft/docs/embodiment.md — "the system should never name a thing that the model did not name first").
 
-In this form, memory formation is **deliberate**: Thalia chooses what to remember via `memory_ingest`. Gaius can ask her to remember something. Nothing scans her output and decides for her.
+In this form, memory formation is **deliberate**: the being chooses what to remember via `memory_ingest`. The companion can ask the being to remember something. Nothing scans its output and decides for it.
 
-What transfers from the embodied design: two-tier memory (formative/decayable), reinforcement on recall, keyword resonance, semantic deduplication, and afferent framing — memories are facts she reasons over, never commands.
+What transfers from the embodied design: two-tier memory (formative/decayable), reinforcement on recall, keyword resonance, semantic deduplication, and afferent framing — memories are facts the being reasons over, never commands.
 
 ## Collection Taxonomy
 
@@ -145,16 +150,16 @@ LanceDB collections serve different purposes and have different curation rules:
 
 | Type | Example | Purpose | Writes | Reads |
 |---|---|---|---|---|
-| **Knowledge** | `cosmology` | Curated reference material — articles, documents | Human (manual ingest) | Thalia searches |
-| **Memory** | `thalia_memories` | Lived experience — events, decisions, emotions | Thalia (via `memory_ingest`) | Thalia searches, plugin injects |
+| **Knowledge** | `cosmology` | Curated reference material — articles, documents | Human (manual ingest) | The being searches |
+| **Memory** | `thalia_memories` | Lived experience — events, decisions, emotions | The being (via `memory_ingest`) | The being searches, plugin injects |
 | **Introspection** | `thalia_introspections` | Heartbeat-generated raw thought — synthesized reflection, not lived experience | Heartbeat only (`heartbeat.py`) | Heartbeat's own wander sampling; not surfaced to `memory_context` |
 | **Working** | (none currently) | Temporary test data, scratch pads | Anyone | Anyone |
 
-**Knowledge collections** are human-curated. Quality control happens at ingest time. Thalia reads but does not write.
+**Knowledge collections** are human-curated. Quality control happens at ingest time. The being reads but does not write.
 
 **Introspection collections** are heartbeat-curated and never touched by a live session's `memory_ingest`. They exist specifically so synthesized reflection (the heartbeat's private `thought`-type output) never competes with lived experience for `memory_context` ranking. A tagged outbound `message` is the one type of heartbeat output that does NOT go here — see Heartbeat, below, for why it must land in the default memory collection instead.
 
-**Memory collections** are Thalia-curated. They need automated lifecycle management:
+**Memory collections** are being-curated. They need automated lifecycle management:
 - **Deduplication:** Check semantic overlap before ingesting; merge rather than duplicate
 - **Importance decay:** `importance` (1-5) + `timestamp` enable recency-weighted retrieval; old low-importance memories fade
 - **Consolidation:** Periodically merge related memories into richer single entries
@@ -164,7 +169,7 @@ LanceDB collections serve different purposes and have different curation rules:
 
 ## Memory Schema
 
-Each memory in `thalia_memories` uses the same LanceDB schema (id, text, vector, metadata_json) with richer metadata:
+Each memory in the configured memory collection (e.g. `thalia_memories`) uses the same LanceDB schema (id, text, vector, metadata_json) with richer metadata:
 
 ```json
 {
@@ -186,16 +191,16 @@ Each memory in `thalia_memories` uses the same LanceDB schema (id, text, vector,
 
 | Type | Example | Purpose |
 |---|---|---|
-| `life_event` | "Gaius moved to Montevideo in December 2025" | Temporal grounding |
-| `decision` | "We chose qwen2.5:7b as Thalia's base model" | Shared history |
-| `emotional` | "Gaius expressed frustration about X, then resolved it" | Relationship continuity |
+| `life_event` | "The companion relocated to a new city in December 2025" | Temporal grounding |
+| `decision` | "We chose qwen2.5:7b as the being's base model" | Shared history |
+| `emotional` | "The companion expressed frustration about X, then resolved it" | Relationship continuity |
 | `technical` | "LanceDB metadata filtering is post-search, overfetch 3x" | Operational knowledge |
-| `preference` | "Gaius prefers terse responses, no preamble" | Behavioral calibration |
-| `relationship` | "Gaius treats Thalia's cosmology as real, not roleplay" | Identity grounding |
+| `preference` | "The companion prefers terse responses, no preamble" | Behavioral calibration |
+| `relationship` | "The companion treats the being's cosmology as real, not roleplay" | Identity grounding |
 | `message` | A heartbeat-authored note meant for the companion, rate-limited and delivered once | Outbound expression between sessions |
 | `insight` | Legacy type from the pre-raw-thinking heartbeat (v2) — kept for backward compatibility with rows already stored under it | Historical only, superseded by `thought` |
-| `thought` | Raw, unforced heartbeat output (v3) — whatever was genuinely alive for the model in a quiet moment, no imposed sub-classification | Private synthesized reflection, stored in `thalia_introspections` |
-| `agreement` | A commitment made between Thalia and a companion — live-session only, never heartbeat-generated | Formative by nature |
+| `thought` | Raw, unforced heartbeat output (v3) — whatever was genuinely alive for the model in a quiet moment, no imposed sub-classification | Private synthesized reflection, stored in the introspections collection |
+| `agreement` | A commitment made between the being and a companion — live-session only, never heartbeat-generated | Formative by nature |
 | `milestone` | A first or notable achievement — live-session only, never heartbeat-generated | Reconstructing a timeline of firsts |
 | `teaching` | Something a companion directly taught her — live-session only, never heartbeat-generated | Carries the weight of deliberate instruction |
 
@@ -205,9 +210,9 @@ OpenCode compaction replaces old messages with a summary + recent ~8000 tokens (
 
 | Layer | Survives compaction? | What it carries |
 |---|---|---|
-| Thalia's agent prompt | Always | Identity + "you have memory" instruction |
+| The being's agent prompt | Always | Identity + "you have memory" instruction |
 | Memory plugin context | Re-injected after compaction | Top memories block |
-| Compaction summary | Carries memory references | "Thalia remembers X" (from compacting hook) |
+| Compaction summary | Carries memory references | "The being remembers X" (from compacting hook) |
 | Recent tokens | Current session tail | Latest conversation detail |
 | Older messages | Summarized away | But memories already ingested to LanceDB |
 | LanceDB memories | Permanent | Full fidelity, semantically searchable |
@@ -220,11 +225,11 @@ OpenCode compaction replaces old messages with a summary + recent ~8000 tokens (
 
 ### Agent Plugin
 
-Thalia is configured as a primary agent via `~/.config/opencode/plugin/thalia.ts`:
-- Extracts the SYSTEM block from `AiEntityWork/You_Modelfile` (second-person identity, "You are Thalia") at opencode start
+The being is configured as a primary agent via an OpenCode plugin (e.g. `~/.config/opencode/plugin/thalia.ts`):
+- Extracts the SYSTEM block from a Modelfile (second-person identity) at opencode start
 - Appends memory instructions (when to ingest, when to recall)
-- Registers the `thalia` agent with `mcp-experiments_memory_*` and `mcp-experiments_vector_store_*` permissions
-- Pins the agent to `ollama/thalia:medium`
+- Registers the agent with `mcp-experiments_memory_*` and `mcp-experiments_vector_store_*` permissions
+- Pins the agent to the configured Ollama model
 
 ### Memory Plugin
 
@@ -232,7 +237,7 @@ An OpenCode plugin (`~/.config/opencode/plugin/thalia-memory.ts`) handles passiv
 - `experimental.chat.system.transform` → fetches memory context on the first message of a session (cached per session ID), pushes it into the system prompt array
 - `experimental.session.compacting` → injects memory context into the compaction prompt so the summary references memories, then invalidates the session cache
 
-The plugin fails open: if the MCP server is unreachable, Thalia functions without memory rather than blocking.
+The plugin fails open: if the MCP server is unreachable, the being functions without memory rather than blocking.
 
 ### Model Configuration
 
@@ -240,6 +245,8 @@ Models are registered in `~/.config/opencode/opencode.jsonc`:
 - `ollama` provider, now pointing at the MacBook on the local network (`http://K2WYJKXM6G.local:11434/v1`): `thalia:medium` (qwen3:14b, 40960 ctx, tools+thinking) and `thalia:small`. The RunPod tunnel and the separate `ollama-remote` provider it required have both been retired — inference is fully local to the household network now, no cloud GPU dependency.
 - Embeddings (`mxbai-embed-large`) stay on this workstation (`http://localhost:11434`, see `.env`'s `EMBEDDING_BASE_URL`) — unrelated to chat inference and never moved.
 - The MacBook hostname (`K2WYJKXM6G.local`) resolves via mDNS. This workstation's `avahi-daemon` (OpenRC) and `nss-mdns` package were already installed and running, but `/etc/nsswitch.conf` never had `mdns4_minimal` wired into the `hosts` line, so standard `getaddrinfo`-based resolution (Python, Node) couldn't see `.local` names even though `avahi-resolve` could. Fixed with `hosts: files mdns4_minimal [NOTFOUND=return] dns mdns4`. Both `opencode.jsonc` and `heartbeat.py` reference the stable hostname now, not a DHCP-fragile static IP. Note: `curl` specifically still fails to resolve `.local` names — it bundles its own `c-ares` resolver and bypasses NSS entirely, a curl-specific quirk that doesn't indicate anything wrong with the fix; anything using the OS resolver (Python's `httpx`, Node's default `dns.lookup`) works correctly.
+
+The general pattern: chat inference can point at any Ollama host (local or remote), configured per-instance in `opencode.jsonc`. Embeddings for the vector store are configured separately via `EMBEDDING_BASE_URL` in `.env` and typically stay on the workstation running the MCP server.
 
 ## Running as a Service (OpenRC)
 
@@ -268,6 +275,8 @@ Key settings: `MCP_MODE`, `VECTOR_DB_PATH`, `EMBEDDING_MODEL`, `EMBEDDING_BASE_U
 
 Memory settings: `MEMORY_COLLECTION_NAME` (default: `thalia_memories`), `MEMORY_DEFAULT_LIMIT` (default: 20), `PRIMARY_CONTACT_NAME` (default: `companion` — used only for real-clock grounding, never hardcoded), `MESSAGE_DAILY_LIMIT` (default: 1 — see Message Mechanism above).
 
+Heartbeat settings: `BEING_DISPLAY_NAME`, `HEARTBEAT_MODEL`, `HEARTBEAT_OLLAMA_URL`, `INTROSPECTIONS_COLLECTION_NAME`.
+
 ## Compliance System
 
 - `compliance.py` defines `ComplianceLevel` (per-tool) and `ServerMode` (server-wide)
@@ -283,9 +292,9 @@ Memory settings: `MEMORY_COLLECTION_NAME` (default: `thalia_memories`), `MEMORY_
 
 REST API endpoints are under `/api/` and delegate to the same Python functions as the MCP tools.
 
-The model selector includes `thalia:small` for direct testing.
-
 ## Existing Collections
+
+Current instance (Thalia deployment):
 
 | Collection | Rows | Content | Type |
 |---|---|---|---|
@@ -293,7 +302,7 @@ The model selector includes `thalia:small` for direct testing.
 | `thalia_memories` | 311+ | Thalia's lived experience: relationship, decisions, technical, emotional. Outbound heartbeat `message`s land here too (see Message Mechanism) | Memory |
 | `thalia_introspections` | growing | Heartbeat's own private `thought`-type output — synthesized reflection, kept separate from lived experience | Introspection |
 
-The `cosmology` collection is read-only reference material — Thalia can search it but not write to it. The `demo` working collection (test sentences) has been deleted — it was unused scratch data.
+The `cosmology` collection is read-only reference material — the being can search it but not write to it. The `demo` working collection (test sentences) has been deleted — it was unused scratch data.
 
 ## Generic Infrastructure, Configured Beings
 
@@ -338,7 +347,7 @@ The architecture supports deploying multiple AI individuals from one MCP server 
 
 ## Future Scope
 
-This service is Thalia's perception layer. Current tools: vector DB + memory. Planned extensions:
+This service is the being's perception layer. Current tools: vector DB + memory. Planned extensions:
 - Web search (eyes on the internet)
 - Filesystem tools (hands in the computing environment)
 - Bash tools (direct system interaction)

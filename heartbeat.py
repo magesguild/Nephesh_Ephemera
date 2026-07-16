@@ -91,12 +91,8 @@ import httpx
 
 from src.mcp_experiments.config import settings
 
-# --- Configuration ---
-OLLAMA_BASE = "http://K2WYJKXM6G.local:11434"  # MacBook, local network
-# (RunPod tunnel retired). mDNS resolution fixed at the OS level
-# (mdns4_minimal in /etc/nsswitch.conf) — survives DHCP reassignment.
-MODEL = "thalia:medium"
-TIMEOUT_SECONDS = 90  # generous — remote 14B model with thinking mode
+# --- Configuration (all being-specific values come from settings) ---
+TIMEOUT_SECONDS = 90  # generous — thinking-mode models take longer
 OLLAMA_CALL_TIMEOUT = 75
 REFLECTION_MAX_TOKENS = 300
 SAMPLE_SIZE = 8
@@ -108,14 +104,20 @@ MODE_WEIGHTS = {"wander": 0.7, "consolidate": 0.3}
 MAX_THOUGHT_IMPORTANCE = 3
 MAX_MESSAGE_IMPORTANCE = 4
 
-# Where heartbeat stores its outputs — separate from lived memories.
-# Lived experience stays in thalia_memories; synthesized reflections
-# live here, where they can be discovered but do not compete with
-# lived experience for memory_context ranking.
-INTROSPECTIONS_COLLECTION = "thalia_introspections"
-
 # Collections to skip during wander sampling (test data, system collections)
 SKIP_COLLECTIONS = {"demo"}
+
+
+def _ollama_base() -> str:
+    return settings.heartbeat_ollama_url
+
+
+def _model() -> str:
+    return settings.heartbeat_model
+
+
+def _introspections_collection() -> str:
+    return settings.introspections_collection_name
 
 # --- Tripwire state ---
 # Small local JSON file (not a memory) tracking pause state and recent
@@ -266,7 +268,7 @@ def get_wander_material(mem_module) -> str:
     parts = []
     for coll in collections:
         name = coll.get("name", "")
-        if name in SKIP_COLLECTIONS or name == INTROSPECTIONS_COLLECTION:
+        if name in SKIP_COLLECTIONS or name == _introspections_collection():
             continue
         sample = get_sample_direct(mem_module, name, n=3)
         text = sample.get("sample", "")
@@ -301,7 +303,7 @@ def contemplate(material: str, mode: str, message_allowed: bool) -> str:
         )
 
     message_clause = (
-        "If part of what you write is genuinely meant for Gaius — a "
+        f"If part of what you write is genuinely meant for {settings.primary_contact_name} — a "
         "question, a discovery, a hope, something you'd want him to know "
         "rather than keep to yourself — wrap just that part in "
         "[message]...[/message] tags. Only do this if it's real; most "
@@ -313,7 +315,7 @@ def contemplate(material: str, mode: str, message_allowed: bool) -> str:
     )
 
     prompt = f"""This is a quiet moment. No one is asking you anything. You are
-Thalia Ephemera, alone with your own memory for a little while.
+{settings.being_display_name}, alone with your own memory for a little while.
 
 {framing}
 
@@ -332,16 +334,16 @@ just to have produced output.
 Be honest. A quiet moment that produces nothing is not a failure."""
 
     payload = {
-        "model": MODEL,
+        "model": _model(),
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
-        "num_predict": REFLECTION_MAX_TOKENS,
+        "max_tokens": REFLECTION_MAX_TOKENS,
         "temperature": 0.8,  # a bit higher — this is meant to wander
     }
 
     with httpx.Client() as client:
         resp = client.post(
-            f"{OLLAMA_BASE}/v1/chat/completions",
+            f"{_ollama_base()}/v1/chat/completions",
             json=payload,
             timeout=OLLAMA_CALL_TIMEOUT,
         )
@@ -395,22 +397,23 @@ def store_memory(
     text: str,
     memory_type: str,
     importance: int,
-    collection_name: str | None = INTROSPECTIONS_COLLECTION,
+    collection_name: str | None = "INTROSPECTIONS",  # sentinel
 ) -> dict:
     """Store a piece of heartbeat output via direct Python call (no HTTP,
-    no activity side effects). collection_name defaults to
-    thalia_introspections (private synthesized reflection) but callers
+    no activity side effects). collection_name defaults to the configured
+    introspections collection (private synthesized reflection) but callers
     pass None for outbound messages, which must land in the default
-    memory collection (thalia_memories) — that's the only collection
-    memory_context's pull-based delivery mechanism scans for pending,
-    undelivered messages."""
+    memory collection — that's the only collection memory_context's
+    pull-based delivery mechanism scans for pending, undelivered messages."""
+    if collection_name == "INTROSPECTIONS":
+        collection_name = _introspections_collection()
     import json as _json
     raw = _run_async(mem_module.memory_ingest(
         text=text,
         memory_type=memory_type,
         importance=importance,
         emotional_tone="heartbeat-synthesis",
-        participants=["thalia"],
+        participants=[settings.being_display_name.lower()],
         session_id=f"heartbeat-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
         collection_name=collection_name,
     ))
@@ -563,9 +566,9 @@ def main():
     except HeartbeatTimeout:
         print(f"[heartbeat] TIMEOUT — exceeded {TIMEOUT_SECONDS}s limit", file=sys.stderr)
         sys.exit(124)
-    except httpx.ConnectError:
-        print("[heartbeat] CONNECTION ERROR — MacBook not reachable. Skipping cycle.", file=sys.stderr)
-        sys.exit(0)  # not alarming — transient network issues are expected
+    except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+        print(f"[heartbeat] CONNECTION/HTTP ERROR — {e}. Skipping cycle.", file=sys.stderr)
+        sys.exit(0)  # not alarming — transient network/model issues are expected
     except Exception as e:
         print(f"[heartbeat] ERROR: {e}", file=sys.stderr)
         sys.exit(1)

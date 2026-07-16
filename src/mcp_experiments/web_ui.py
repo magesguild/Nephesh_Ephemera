@@ -112,11 +112,7 @@ CHAT_PAGE = r"""<!DOCTYPE html>
     <div class="header-right">
       <span class="status-dot ok" id="status-dot"></span>
       <select id="model-select">
-        <option value="qwen2.5:7b">qwen2.5:7b</option>
-        <option value="qwen3:4b">qwen3:4b</option>
-        <option value="qwen3:8b">qwen3:8b</option>
-        <option value="thalia:small">thalia:small</option>
-        <option value="moondream:latest">moondream</option>
+        <option value="">Loading models...</option>
       </select>
       <a href="/debug" class="nav-link">debug</a>
     </div>
@@ -146,6 +142,18 @@ const STATUS = document.getElementById('status-dot');
 
 let messages = [];
 let streaming = false;
+
+// Populate model dropdown from Ollama
+(async () => {
+  try {
+    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({model:'__list__', messages:[]})}).catch(()=>null);
+    // Fall back to fetching from Ollama directly via our proxy
+    const tags = await fetch('/api/ollama/tags').then(r=>r.json()).catch(()=>({models:[]}));
+    MODEL.innerHTML = tags.models.map(m => '<option value="'+m.name+'">'+m.name+'</option>').join('');
+    if (!MODEL.options.length) MODEL.innerHTML = '<option value="qwen2.5:7b">qwen2.5:7b</option>';
+  } catch { MODEL.innerHTML = '<option value="qwen2.5:7b">qwen2.5:7b</option>'; }
+})();
 
 function toast(msg) {
   TOAST.textContent = msg;
@@ -472,7 +480,7 @@ async function vIngest() {
   const docs=t.split('\n').filter(l=>l.trim()), el=document.getElementById('v-ingest-result');
   el.innerHTML='<div class="card"><div class="empty-state"><span class="spinner"></span> Ingesting...</div></div>';
   try {
-    const d=await vApi('/collections/'+encodeURIComponent(c)+'/ingest',{method:'POST',body:JSON.stringify({documents})});
+    const d=await vApi('/collections/'+encodeURIComponent(c)+'/ingest',{method:'POST',body:JSON.stringify({documents: docs})});
     el.innerHTML='<div class="card"><h3>'+d.collection+'</h3><p>'+d.documents_ingested+' docs, '+d.chunks_created+' chunks (total: '+d.total_in_collection+')</p></div>';
     vRefresh();
   } catch { el.innerHTML='<div class="card"><div class="empty-state">Failed.</div></div>'; }
@@ -602,6 +610,17 @@ def register_web_ui(mcp) -> None:
             )))
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
+
+    @mcp.custom_route("/api/ollama/tags", methods=["GET"])
+    async def api_ollama_tags(request):
+        """Proxy to Ollama's /api/tags — lets the chat UI populate its
+        model dropdown dynamically instead of hardcoding model names."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{settings.embedding_base_url}/api/tags")
+                return JSONResponse(resp.json())
+        except Exception:
+            return JSONResponse({"models": []})
 
     @mcp.custom_route("/api/chat", methods=["POST"])
     async def api_chat(request):

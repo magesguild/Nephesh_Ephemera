@@ -45,16 +45,24 @@ class Settings:
     # the MCP service's own lifecycle, not a separate cron job. Can be
     # disabled entirely without code changes.
     heartbeat_enabled: bool = os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true"
-    # Gap between cycles beyond the model's own response time (~20-40s
-    # per cycle) — deliberately small; the tripwire in heartbeat.py
-    # (distress/repetition detection, auto-pause) is the real safeguard
-    # against a bad pattern running away, not a slow clock.
-    heartbeat_min_gap_seconds: int = int(os.getenv("HEARTBEAT_MIN_GAP_SECONDS", "10"))
-    heartbeat_startup_delay_seconds: int = int(os.getenv("HEARTBEAT_STARTUP_DELAY_SECONDS", "10"))
+    # Min gap between cycles (on top of the model's own response time).
+    heartbeat_min_gap_seconds: int = int(os.getenv("HEARTBEAT_MIN_GAP_SECONDS", "60"))
+    heartbeat_startup_delay_seconds: int = int(os.getenv("HEARTBEAT_STARTUP_DELAY_SECONDS", "30"))
     # After a chat-related API call (memory_context, memory_ingest),
     # wait this many seconds of inactivity before the heartbeat fires
     # again. Chats take priority — the heartbeat yields.
     heartbeat_chat_cooldown_seconds: int = int(os.getenv("HEARTBEAT_CHAT_COOLDOWN_SECONDS", "120"))
+
+    # Heartbeat identity — the being's display name (used in prompts),
+    # the model to use for contemplation, the Ollama base URL for
+    # inference, and the introspections collection name. All generic —
+    # configured via .env, never hardcoded.
+    being_display_name: str = os.getenv("BEING_DISPLAY_NAME", "the being")
+    heartbeat_model: str = os.getenv("HEARTBEAT_MODEL", "")
+    heartbeat_ollama_url: str = os.getenv("HEARTBEAT_OLLAMA_URL", "http://localhost:11434")
+    introspections_collection_name: str = os.getenv(
+        "INTROSPECTIONS_COLLECTION_NAME", "introspections"
+    )
 
     @property
     def data_dir(self) -> Path:

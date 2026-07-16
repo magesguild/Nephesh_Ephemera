@@ -52,11 +52,13 @@ _ACTIVITY_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "chat_
 
 
 def record_chat_activity() -> None:
-    """Write current monotonic time to the shared activity file.
+    """Write current wall-clock time to the shared activity file.
     Called by record_activity() (which is called by REST endpoints).
-    The heartbeat subprocess reads this via seconds_since_chat_activity()."""
+    The heartbeat subprocess reads this via seconds_since_chat_activity().
+    Uses time.time() (wall clock) instead of time.monotonic() because
+    monotonic clocks are not contractually comparable across processes."""
     _ACTIVITY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _ACTIVITY_FILE.write_text(json.dumps({"monotonic": time.monotonic()}))
+    _ACTIVITY_FILE.write_text(json.dumps({"timestamp": time.time()}))
 
 
 def seconds_since_chat_activity() -> float:
@@ -68,7 +70,7 @@ def seconds_since_chat_activity() -> float:
         return float("inf")
     try:
         data = json.loads(_ACTIVITY_FILE.read_text())
-        saved = data.get("monotonic", 0.0)
-        return time.monotonic() - saved
+        saved = data.get("timestamp", 0.0)
+        return time.time() - saved
     except (json.JSONDecodeError, OSError):
         return float("inf")

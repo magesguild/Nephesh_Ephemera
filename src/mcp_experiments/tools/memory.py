@@ -545,7 +545,8 @@ async def memory_context(
 
     type_order = [
         "message", "relationship", "preference", "life_event",
-        "decision", "emotional", "technical", "other",
+        "decision", "emotional", "technical", "agreement",
+        "milestone", "teaching", "insight", "thought", "other",
     ]
     lines: list[str] = ["## Long-term Memory"]
     if last_contact:
