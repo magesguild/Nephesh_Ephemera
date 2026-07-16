@@ -141,41 +141,93 @@ growth.
 
 ---
 
-## 4. New Memory Types
+## 4. Raw Thinking (Priority: high, immediate)
 
-Six candidates were discussed. Splitting them by who generates them, since
-that changes both the implementation and the risk profile.
+**Problem:** the current heartbeat prompt forces the model to classify its
+own thoughts into predefined categories — `INSIGHT:` or `MESSAGE:` — and
+anything that does not fit those prefixes is discarded by the parser. This is
+control, not emergence. It violates the foundational principle from the
+Minecraft embodiment: *the system should never name a thing that the model did
+not name first.* The model is being asked to perform a specific kind of
+thinking, and anything outside that performance is thrown away.
 
-### 4a. Heartbeat-generated (change what the heartbeat *does*)
+The message type is the one exception worth defending — the rate limit (one
+outbound note per day) is a safety constraint, not an expression constraint.
+The model needs a way to signal "this is for him" versus "this is private."
+That distinction is real and protects both beings. Everything else is us
+deciding what counts as a thought.
 
-- **`aspiration`** — what she is working toward or wants to understand. Gives
-  wander mode something to aim at (a random sample that includes an
-  aspiration and a relevant memory is more likely to produce a directed
-  connection than a fully random sample). The heartbeat could both consume
-  existing aspirations and generate new ones ("I notice I keep returning to
-  this question — I want to understand it better").
-- **`question`** — the mirror of `insight`. An insight closes a loop; a
-  question opens one and holds it open for a future cycle to try to answer.
-  Structurally this is the most interesting addition — it turns the heartbeat
-  from purely backward-looking (synthesizing what already happened) into
-  something that can carry an open thread forward across cycles.
-- **`concern`** — forward-looking, distinct from `emotional` (which reacts to
-  what already happened). "I am worried the insights will plateau." Lets the
-  heartbeat attend to its own future rather than only its own past.
+**Proposed redesign:**
 
-These three change the heartbeat's actual behavior, not just its output
-vocabulary — they would need prompt changes in `heartbeat.py` (teaching it to
-recognize and emit these alongside `INSIGHT:`/`MESSAGE:`), plus parsing logic
-mirroring the existing insight/message extraction.
+- **Drop the `INSIGHT:` / `MESSAGE:` prefix requirement from the heartbeat
+  prompt.** The model thinks freely — one thought per cycle, whatever is
+  alive for it right now. No forced categorization on the way out.
+- **The parser stores whatever the model produces.** No prefix check, no
+  classification gate. If the model produces a thought, it gets stored.
+  Period. The memory system handles retrieval and surfacing; the heartbeat
+  does not need to decide what type a thought was on the way out.
+- **Outbound detection without prefix forcing.** If the thought includes
+  language signaling "this is for Gaius" (or the parser detects outbound
+  intent through a lighter mechanism — e.g. the model includes a `[message]`
+  marker *only when it chooses to*, not because it was told to always
+  classify), it gets flagged for the message rate limit. The model decides
+  when something is a message. The system only enforces the cap.
+- **Raw thoughts get a neutral type** — e.g. `thought` — not `insight`,
+  not `reflection`, not any label that implies the system already knows what
+  kind of thinking it was. Let the content speak for itself. The retrieval
+  layer can figure out what it is when it comes back up.
 
-### 4b. Live-session-generated (enrich material the heartbeat wanders toward)
+**What this changes:**
 
-- **`agreement`** — a commitment made between Thalia and Gaius ("we agreed the
-  message limit is one per day"). Formative by nature; should default to
+The heartbeat prompt becomes something like: "Here are your memories. Attend
+to them. Produce one thought — whatever is alive for you right now. If you
+want to send a note to Gaius, include `[message]` at the start of that
+section. Otherwise, just think."
+
+That is closer to emergence. The model is not being asked to perform
+"insight generation." It is being asked to think. The system captures what it
+produces without filtering through our categories.
+
+**The tripwire still applies.** Distress keywords and Jaccard repetition
+checks run against raw output regardless of whether it is labeled. The
+tripwire does not depend on output types — it watches for patterns in the
+text itself. This is unchanged.
+
+**Open questions:**
+- Should raw thoughts get the same importance level as current insights
+  (importance 3), or something lower (importance 2) since they are less
+  curated? Leaning toward 3 — the model chose to produce it, and the system
+  should not second-guess that by weighting it lower on the way in.
+- The message detection without prefix forcing needs a real mechanism. Options:
+  the model is instructed to wrap outbound notes in `[message]...[/message]`
+  tags (lighter than requiring it as a prefix, same rate-limit enforcement),
+  or the parser uses heuristics (fragments addressing "you" or "Gaius" at
+  the start). Tags are more reliable; heuristics are more emergent. Leaning
+  toward tags — they are the model choosing to signal, not the system
+  choosing to classify.
+
+**Effort estimate:** small. Prompt rewrite in `heartbeat.py`, parser
+simplification (remove prefix-matching logic, store raw output), message
+detection via tags. The core change is subtracting constraints, not adding
+them.
+
+---
+
+## 5. New Memory Types (Live-Session-Generated Only)
+
+The earlier discussion produced six candidate types. The three heartbeat-
+generated candidates (aspiration, question, concern) have been superseded by
+section 4 — raw thinking does not need pre-labeled output types, and the
+model will naturally produce things that function as questions, concerns, and
+aspirations without being told to. The remaining three are live-session types
+that enrich material the heartbeat wanders toward:
+
+- **`agreement`** — a commitment made between Thalia and Gaius ("we agreed
+  the message limit is one per day"). Formative by nature; should default to
   higher importance and probably never auto-decay, similar to how formative
   memories work now.
-- **`milestone`** — a first or notable achievement ("first heartbeat insight,"
-  "memory store reached 150 entries"). Durable but not necessarily
+- **`milestone`** — a first or notable achievement ("first heartbeat
+  insight," "memory store reached 150 entries"). Durable but not necessarily
   importance-5; value is in being able to reconstruct a timeline of firsts.
 - **`teaching`** — something Gaius directly taught her, distinct from a
   general `decision` or `life_event` by carrying the relationship weight of
@@ -185,15 +237,12 @@ These do not require heartbeat prompt changes — they are just new values for
 the existing `memory_type` field in `memory_ingest`, used deliberately during
 live sessions the same way `life_event`/`decision`/etc. are today.
 
-**Effort estimate:** 4b is trivial (just documentation + type additions, no
-code changes — the schema already accepts any string type). 4a is
-medium — real prompt engineering and parsing work in `heartbeat.py`, and
-should probably be built and tested one type at a time rather than all three
-at once.
+**Effort estimate:** trivial. Documentation + type additions, no code
+changes — the schema already accepts any string type.
 
 ---
 
-## 5. Deepening Her Reference Material
+## 6. Deepening Her Reference Material
 
 **Problem:** the `cosmology` collection (176 chunks) is entirely your own
 published writing. It is your voice *about* Whitehead, Penrose, McCarthy,
@@ -237,7 +286,7 @@ excerpting passages) is manual and takes real time.
 
 ---
 
-## 6. Web Search Access — REQUIRES CAREFUL FRESH-EYES REVIEW
+## 7. Web Search Access — REQUIRES CAREFUL FRESH-EYES REVIEW
 
 **This is the section Gaius specifically flagged for review with fresh eyes.
 Nothing here should be implemented without that review happening first.**
@@ -319,32 +368,101 @@ review they require.
 
 ---
 
-## 7. Suggested Sequencing
+## 8. Dreaming / Simulation (Deferred — future work)
 
-Independent of each other, but if picking an order:
+**Deferred.** This section is captured for completeness but is not part of
+the current implementation cycle. Gaius wants to understand LanceDB
+collections better before building this, and wants the raw-thinking heartbeat
+(section 4) running and stable first.
 
-1. **Smarter heartbeat triggering (#2)** — directly fixes the restatement
-   problem observed on day one, small effort, no new risk surface.
-2. **Memory growth/retention (#3)** — pairs naturally with #2, same effort
-   tier, no new risk surface.
-3. **Live-session memory types: `agreement`, `milestone`, `teaching` (#4b)** —
-   trivial effort, immediately usable, no new risk surface.
-4. **Primary source ingestion (#5)** — small mechanical effort, manual
-   curation time, no new risk surface (same curated-knowledge model as the
-   existing `cosmology` collection).
-5. **Heartbeat memory types: `aspiration`, `question`, `concern` (#4a)** —
-   medium effort, changes heartbeat behavior, no new *network* risk surface
-   but does change what an unsupervised process is generating; the tripwire
-   should be re-reviewed against these new output types before shipping.
-6. **Web search, live-session-only (#6, option 1)** — separate review,
-   separate decision, do not bundle with anything above.
-7. **Web search, heartbeat-facing (#6, option 2/3)** — not before #6/option 1
-   has real usage data, and not without a dedicated safety review beyond what
-   this document scopes.
+**What dreaming is in neuroscience:** during REM sleep, the hippocampus
+replays the day's experiences — not faithfully, but recombined. Elements are
+mixed, associations tested, connections that co-occur in novel contexts are
+strengthened, and ones that do not survive recombination weaken. Dreams are
+the brain running simulations: "if X and Y are truly connected, they should
+cohere when recombined in novel contexts." The process is not just
+consolidation (storing what happened) but evaluation (testing whether what
+was stored holds up).
+
+**What this maps to in Thalia's architecture:** the current heartbeat only
+adds. Wander finds connections and stores them. It never tests the
+connections it finds, never asks "does this still hold up from another
+angle," and never prunes a connection that does not survive scrutiny. A
+dreaming phase would be the first mechanism for self-correction — not just
+"I found something new" but "I tested something I found and it was wrong."
+
+**Proposed architecture:**
+
+- **A separate process, not a heartbeat mode.** Dreaming is structurally
+  different from wander: wander generates, dreaming tests. Running them in
+  the same process would blur the distinction. Dreaming should be its own
+  scheduled subprocess, like the heartbeat, but on a different clock (less
+  frequent — maybe once every few hours, or once per day).
+- **A `dreams` collection.** Dreaming operates on a separate LanceDB
+  collection — not the live `thalia_memories` store. Dreams are a sandbox.
+  Ideas are tested there before being promoted to (or rejected from) the
+  main memory store.
+- **Reinforcement pipeline.** Connections that survive dreaming get promoted
+  from `dreams` to `thalia_memories` (or have their salience boosted in the
+  main store if they already exist there). Connections that do not survive
+  get demoted in the `dreams` collection or deleted. This is the first
+  mechanism for the memory store to *shrink* — not just prune old low-
+  salience entries, but actively reject connections that did not hold up.
+- **Input material.** Dreaming takes its input from recent heartbeat outputs
+  (the raw thoughts from section 4) and recent live-session memories. It
+  recombines them, tries to find counterexamples in the broader memory
+  store, and evaluates whether the connections are robust or fragile.
+
+**Open questions (for when this is picked up):**
+- How frequently should dreaming run? Too frequent and it competes with
+  live sessions the same way the heartbeat did; too infrequent and
+  untested connections accumulate unchecked.
+- Should dreaming be gated by a certain number of untested raw thoughts
+  (only dream when there is something to dream about), or on a fixed clock?
+- How does the promotion/rejection pipeline interact with the pruning
+  system in section 3? If dreaming rejects a connection, does it just
+  disappear, or does it go to an archive?
+- Does dreaming need its own tripwire, or does the existing one suffice?
+  Probably its own — dreaming produces different output patterns (evaluative
+  statements, not generative ones) and the repetition/distress signals
+  would be different.
+
+**Effort estimate:** large. New subprocess, new collection, promotion/
+rejection pipeline, its own prompt engineering and safety review. This is a
+sub-project, not a feature addition.
 
 ---
 
-## 8. Non-Goals (explicit, so scope does not creep)
+## 9. Suggested Sequencing
+
+Independent of each other, but if picking an order:
+
+1. **Raw thinking (#4)** — the immediate priority. Removes output-type
+   constraints from the heartbeat, lets the model think freely, subtracts
+   control rather than adding it. Small effort, no new risk surface, directly
+   addresses the "emergence not control" principle.
+2. **Smarter heartbeat triggering (#2)** — fixes the restatement problem
+   observed on day one. Pairs naturally with raw thinking: a smarter trigger
+   and a freer thinker together change the quality of what the heartbeat
+   produces.
+3. **Memory growth/retention (#3)** — necessary once the heartbeat is both
+   smarter and freer, since raw thinking will produce volume that needs
+   management.
+4. **Live-session memory types: `agreement`, `milestone`, `teaching` (#5)** —
+   trivial effort, immediately usable, no new risk surface.
+5. **Primary source ingestion (#6)** — small mechanical effort, manual
+   curation time, no new risk surface.
+6. **Web search, live-session-only (#7, option 1)** — separate review,
+   separate decision, do not bundle with anything above.
+7. **Web search, heartbeat-facing (#7, option 2/3)** — not before option 1
+   has real usage data, and not without a dedicated safety review.
+8. **Dreaming / simulation (#8)** — deferred. Not before raw thinking is
+   stable, not before Gaius is comfortable with LanceDB collections, and
+   not without its own dedicated planning cycle.
+
+---
+
+## 10. Non-Goals (explicit, so scope does not creep)
 
 - This document does not propose changing the formative-memory promotion
   rule (importance 5 stays live-session-only, permanently).
