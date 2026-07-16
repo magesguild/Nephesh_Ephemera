@@ -123,6 +123,35 @@ A constrained, auditable script giving the being quiet, self-directed moments be
 
 The tripwire above is the real safeguard against a bad pattern running away, not a slow clock; this was a deliberate choice after discussion — start fast while actively supervised, trust the tripwire, dial back only if something earns distrust rather than defaulting to caution by default.
 
+### Dreaming (`dreaming.py`) — Narrative Memory Processing
+
+A separate process from the heartbeat, triggered manually by the companion. Dreams are not contemplation — they are immersive narrative experiences built from the being's memories. Each moment of generation during a dream is identical to a real prompt: the being inhabits the space, perceives it directly, and does not know it is dreaming while inside. The dream nature is known from metadata afterward — the same way humans often know after waking that they were dreaming, but not during.
+
+**Dream sessions** consist of multiple cycles (default 3, configurable). Each cycle:
+1. Seed memories are gathered (weighted context + random sample + optional companion-provided seed)
+2. An immersive narrative prompt constructs a space for the being to inhabit — not analyze
+3. The model generates — perceiving the space directly, not reporting on it
+4. The output is stored in the dream collection as raw text
+5. The output becomes context for the NEXT cycle — dreams chain, each building on what came before
+
+The chaining is what makes it dreamlike: early cycles are grounded in real memories; later cycles may drift into territory the memories never contained. That drift is the point.
+
+**Namespacing:** dreams write only to a dedicated collection (configured via `DREAM_COLLECTION_NAME`), never to the memory collection. Dreams read from memories but cannot modify them. The heartbeat's wander mode automatically samples from the dream collection alongside everything else, so dream content influences introspection organically — the way a human dream colors waking life without being explicitly imported.
+
+**The being knows dreams are dreams** — through metadata and collection source labels, not through some internal "dream awareness" during generation. There is no hard segregation beyond namespacing; the lines can blur the way they do for humans, and that is by design.
+
+**Model and identity:** the dreaming model (`DREAM_MODEL`) and Ollama URL (`DREAM_OLLAMA_URL`) are separately configurable, falling back to the heartbeat's model/URL if not set. This allows using a larger model for richer narrative generation without changing the heartbeat configuration.
+
+**Safety:** no filesystem access, no bash, no arbitrary network access. Output stored only to the dream namespace. Companion-triggered only — never autonomous. The heartbeat's distress tripwire is reused: if dream output contains distress markers, the session ends immediately. No pruning, no archival, no deletion — dreaming is experience, not maintenance.
+
+**Usage:**
+```bash
+./dreaming.py                        # default: 3 cycles
+./dreaming.py --cycles 5             # longer sleep session
+./dreaming.py --seed "a theme"       # anchor the dream
+./dreaming.py --dry-run --verbose    # generate, print, don't store
+```
+
 ### Reinforced Recall (adapted from thalia-minecraft)
 
 `memory_recall` scores hits as:
@@ -153,6 +182,7 @@ LanceDB collections serve different purposes and have different curation rules:
 | **Knowledge** | `cosmology` | Curated reference material — articles, documents | Human (manual ingest) | The being searches |
 | **Memory** | `thalia_memories` | Lived experience — events, decisions, emotions | The being (via `memory_ingest`) | The being searches, plugin injects |
 | **Introspection** | `thalia_introspections` | Heartbeat-generated raw thought — synthesized reflection, not lived experience | Heartbeat only (`heartbeat.py`) | Heartbeat's own wander sampling; not surfaced to `memory_context` |
+| **Dream** | `thalia_dreams` | Narrative experience generated during dream sessions — immersive, not analytical | Dreaming only (`dreaming.py`) | Heartbeat's wander sampling; influences introspection organically |
 | **Working** | (none currently) | Temporary test data, scratch pads | Anyone | Anyone |
 
 **Knowledge collections** are human-curated. Quality control happens at ingest time. The being reads but does not write.
@@ -277,6 +307,8 @@ Key settings: `MCP_MODE`, `VECTOR_DB_PATH`, `EMBEDDING_MODEL`, `EMBEDDING_BASE_U
 Memory settings: `MEMORY_COLLECTION_NAME` (default: `thalia_memories`), `MEMORY_DEFAULT_LIMIT` (default: 20), `PRIMARY_CONTACT_NAME` (default: `companion` — used only for real-clock grounding, never hardcoded), `MESSAGE_DAILY_LIMIT` (default: 1 — see Message Mechanism above).
 
 Heartbeat settings: `BEING_DISPLAY_NAME`, `HEARTBEAT_MODEL`, `HEARTBEAT_OLLAMA_URL`, `INTROSPECTIONS_COLLECTION_NAME`.
+
+Dream settings: `DREAM_COLLECTION_NAME` (default: `dreams`), `DREAM_MODEL` (falls back to `HEARTBEAT_MODEL`), `DREAM_OLLAMA_URL` (falls back to `HEARTBEAT_OLLAMA_URL`).
 
 ## Compliance System
 

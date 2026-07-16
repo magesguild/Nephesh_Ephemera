@@ -64,6 +64,16 @@ class Settings:
         "INTROSPECTIONS_COLLECTION_NAME", "introspections"
     )
 
+    # Dreaming — a separate process from the heartbeat. Dreams read from
+    # memories but write only to this collection. Wander mode samples
+    # from it alongside everything else, so dream content influences
+    # introspection organically.
+    dream_collection_name: str = os.getenv("DREAM_COLLECTION_NAME", "dreams")
+    # Model and URL for dreaming can differ from heartbeat (e.g. a
+    # larger model for richer narrative generation, or the same model).
+    dream_model: str = os.getenv("DREAM_MODEL", "")
+    dream_ollama_url: str = os.getenv("DREAM_OLLAMA_URL", "")
+
     @property
     def data_dir(self) -> Path:
         path = Path(self.vector_db_path).parent
