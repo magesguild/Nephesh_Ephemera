@@ -43,14 +43,20 @@ the plan's content but affecting where everything runs:
   MacBook on the local network rather than over the RunPod SSH tunnel — full
   local migration, no cloud GPU dependency for chat inference going forward.
   Embeddings (`mxbai-embed-large`) stay on the original workstation, unmoved
-  — no reason to relocate something already working. Both `heartbeat.py` and
-  `opencode.jsonc` point at the MacBook by static IP rather than its `.local`
-  mDNS hostname, because this workstation's `nsswitch.conf` lacks
-  `mdns4_minimal` even though `avahi-daemon` is running under OpenRC; standard
-  `getaddrinfo`-based resolution (Python, Node) cannot see `.local` names
-  here even though `avahi-resolve` can. Using the static IP was the smaller
-  fix given the goal was inference, not fixing system-wide name resolution;
-  it is a known fragility if DHCP ever reassigns the MacBook's address.
+  — no reason to relocate something already working.
+- **mDNS resolution fixed properly at the OS level.** `nss-mdns` was already
+  installed and `avahi-daemon` already running under OpenRC, but
+  `/etc/nsswitch.conf` never had `mdns4_minimal` wired into the `hosts` line,
+  so standard `getaddrinfo`-based resolution (Python, Node) couldn't see
+  `.local` names even though `avahi-resolve` could. Fixed with `hosts: files
+  mdns4_minimal [NOTFOUND=return] dns mdns4`. Both `heartbeat.py` and
+  `opencode.jsonc` now point at the MacBook by its stable `K2WYJKXM6G.local`
+  hostname rather than a static IP that would break on DHCP reassignment.
+  (Note: `curl` specifically still fails to resolve `.local` names — it
+  bundles its own `c-ares` resolver and bypasses NSS entirely, which is a
+  curl-specific quirk, not a sign the underlying fix is incomplete. Anything
+  using the OS resolver — Python's `httpx`, Node's default `dns.lookup` —
+  resolves it correctly, confirmed live for both.)
 
 Everything else below is unchanged from the original planning pass and still
 awaits implementation.

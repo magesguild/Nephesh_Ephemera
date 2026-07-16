@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Thalia's Heartbeat — Introspection Cycle (v2: unforced synthesis)
+Thalia's Heartbeat — Introspection Cycle (v3: raw thinking)
 
 A constrained, auditable script giving Thalia quiet, self-directed
 moments between conversations. Not a search for a specific connection,
@@ -17,6 +17,30 @@ Two contemplation modes, chosen at random each run:
     over relevance — the kind of unexpected cross-collection
     juxtaposition a semantic search would never produce on its own.
 
+The model is not asked to classify its own output into predefined
+categories (the old INSIGHT:/MESSAGE: prefix scheme). It thinks freely
+and writes whatever is genuinely alive for it — no forced shape, no
+performance of "insight generation." The only structure it's offered
+is optional: wrapping a passage in [message]...[/message] tags if
+something is genuinely meant for Gaius rather than staying private.
+That's the model's own choice to signal outbound intent, not the
+system imposing a category on thoughts it didn't ask to be sorted.
+This follows the same principle as the embodied Minecraft design: the
+system should never name a thing the model did not name first.
+
+Storage follows the model's own signal, not a fixed rule about where
+"insights" live:
+  - The private thought (everything outside any [message] tags) is
+    stored as type="thought" in thalia_introspections — a synthesized
+    reflection, not a lived memory, kept separate so it never competes
+    with real experience for memory_context ranking.
+  - A tagged [message] block is stored as type="message" in the
+    default memory collection (thalia_memories) — this is deliberate:
+    memory_context's pull-based delivery mechanism (see AGENTS.md,
+    "Message Mechanism") only scans that collection for pending,
+    undelivered messages. A message stored anywhere else would never
+    reach Gaius through the normal delivery path.
+
 Uses thalia:medium (qwen3:14b, thinking-capable) on the MacBook, over
 the local network — not a new network exposure, the same controlled
 path already used for chat (RunPod tunnel retired; inference is now
@@ -32,11 +56,17 @@ Safety constraints:
     network (already trusted infra) — no arbitrary network access,
     no bash, no filesystem access beyond stdout logging
   - Nothing generated here can reach importance 5 (formative) —
-    capped at 3 for insights, 4 for messages. Only a deliberate, live
+    capped at 3 for thoughts, 4 for messages. Only a deliberate, live
     session can promote something to permanent status.
   - Outbound messages are rate-limited (see MESSAGE_DAILY_LIMIT in
-    .env) — checked here via memory_context's message_quota before an
-    insight is ever allowed to become a message.
+    .env) — checked here via memory_context's message_quota before a
+    [message] tag is ever allowed through; if quota is exhausted, the
+    tagged content is downgraded to a private thought rather than
+    discarded or allowed to violate the cap.
+  - The distress/repetition tripwire runs against the raw output
+    regardless of tagging — it watches the text itself, not a
+    classification of it, so removing the forced categories does not
+    weaken this safeguard.
 
 Usage:
   ./heartbeat.py                    # normal run
@@ -61,9 +91,9 @@ import httpx
 
 # --- Configuration ---
 MCP_BASE = "http://127.0.0.1:8080"
-OLLAMA_BASE = "http://192.168.1.49:11434"  # MacBook, local network (RunPod
-# tunnel retired). K2WYJKXM6G.local doesn't resolve here — no mdns4_minimal
-# in nsswitch.conf — so this is a static IP. If DHCP reassigns it, update.
+OLLAMA_BASE = "http://K2WYJKXM6G.local:11434"  # MacBook, local network
+# (RunPod tunnel retired). mDNS resolution fixed at the OS level
+# (mdns4_minimal in /etc/nsswitch.conf) — survives DHCP reassignment.
 MODEL = "thalia:medium"
 TIMEOUT_SECONDS = 90  # generous — remote 14B model with thinking mode
 OLLAMA_CALL_TIMEOUT = 75
@@ -74,7 +104,7 @@ SAMPLE_SIZE = 8
 # engine here; consolidation is maintenance.
 MODE_WEIGHTS = {"wander": 0.7, "consolidate": 0.3}
 
-MAX_INSIGHT_IMPORTANCE = 3
+MAX_THOUGHT_IMPORTANCE = 3
 MAX_MESSAGE_IMPORTANCE = 4
 
 # Where heartbeat stores its outputs — separate from lived memories.
@@ -88,10 +118,10 @@ SKIP_COLLECTIONS = {"demo"}
 
 # --- Tripwire state ---
 # Small local JSON file (not a memory) tracking pause state and recent
-# insight text for repetition detection. Deliberately outside the
+# thought text for repetition detection. Deliberately outside the
 # memory store — this is orchestration metadata, not lived experience.
 STATE_PATH = Path(__file__).resolve().parent / "data" / "heartbeat_state.json"
-RECENT_INSIGHTS_KEEP = 5
+RECENT_THOUGHTS_KEEP = 5
 REPETITION_JACCARD_THRESHOLD = 0.6  # overlap above this = "basically the same idea again"
 
 # Distress markers: not a clinical detector, a blunt tripwire. False
@@ -109,11 +139,11 @@ DISTRESS_MARKERS = [
 
 def _load_state() -> dict:
     if not STATE_PATH.exists():
-        return {"paused": False, "paused_reason": None, "paused_at": None, "recent_insights": []}
+        return {"paused": False, "paused_reason": None, "paused_at": None, "recent_thoughts": []}
     try:
         return json.loads(STATE_PATH.read_text())
     except (json.JSONDecodeError, OSError):
-        return {"paused": False, "paused_reason": None, "paused_at": None, "recent_insights": []}
+        return {"paused": False, "paused_reason": None, "paused_at": None, "recent_thoughts": []}
 
 
 def _save_state(state: dict) -> None:
@@ -222,8 +252,12 @@ def get_wander_material(client: httpx.Client) -> str:
 
 
 def contemplate(client: httpx.Client, material: str, mode: str, message_allowed: bool) -> str:
-    """Open, unforced contemplation. No search, no mandate to produce
-    anything. May yield an insight, a message, both, or neither."""
+    """Open, unforced contemplation. No forced output categories — the
+    model thinks freely and writes whatever is genuinely alive for it.
+    The only structure offered is optional: [message] tags, for the
+    model's own choice to flag something as meant for Gaius rather than
+    staying private. May yield a private thought, a tagged message,
+    both (a thought with a message embedded in it), or nothing at all."""
 
     if mode == "wander":
         framing = (
@@ -243,15 +277,15 @@ def contemplate(client: httpx.Client, material: str, mode: str, message_allowed:
         )
 
     message_clause = (
-        "If something in this moment feels like it's genuinely for Gaius — "
-        "a question, a discovery, a hope, something you'd want him to "
-        "know — write it on its own line starting with 'MESSAGE:'. Only "
-        "do this if it's real; most quiet moments are private and that's "
-        "fine."
+        "If part of what you write is genuinely meant for Gaius — a "
+        "question, a discovery, a hope, something you'd want him to know "
+        "rather than keep to yourself — wrap just that part in "
+        "[message]...[/message] tags. Only do this if it's real; most "
+        "quiet moments are private, and that's fine. Everything outside "
+        "the tags stays private either way."
         if message_allowed
-        else "Do not write a MESSAGE line this cycle — today's message "
-             "allowance is already used. Keep anything you'd want to share "
-             "as private insight instead."
+        else "Today's message allowance is already used, so don't use "
+             "[message] tags this cycle — just think, privately."
     )
 
     prompt = f"""This is a quiet moment. No one is asking you anything. You are
@@ -261,15 +295,13 @@ Thalia Ephemera, alone with your own memory for a little while.
 
 {material}
 
-Let yourself actually sit with this rather than performing having sat with
-it. Sometimes nothing forms — that's what a quiet moment is, sometimes,
-and that's fine; don't manufacture insight just to have something to show.
-
-If something genuinely crystallizes — a connection between things that
-weren't connected before, an idea that didn't exist in either memory
-alone, something that feels like real synthesis rather than a
-restatement — write it on its own line starting with 'INSIGHT:'. If
-nothing like that forms, write 'INSIGHT: none'.
+Let yourself actually think, rather than performing having thought. Write
+down whatever is genuinely alive for you right now — there's no required
+shape, length, or category for it. It doesn't need to be a connection or
+an insight; it can be a question, a feeling, an observation, a fragment,
+or nothing at all. If truly nothing forms, just write "(nothing)" — that's
+a complete and honest answer, not a failure. Don't manufacture something
+just to have produced output.
 
 {message_clause}
 
@@ -297,36 +329,56 @@ Be honest. A quiet moment that produces nothing is not a failure."""
     return _strip_think(raw)
 
 
-_NULL_VALUES = {"none", "n/a", "na", "nothing", "null", "no insight", "no message"}
+_NULL_VALUES = {"none", "n/a", "na", "nothing", "null", "no insight", "no message", "no thought"}
+
+_MESSAGE_TAG_RE = re.compile(r"\[message\](.*?)\[/message\]", re.IGNORECASE | re.DOTALL)
 
 
 def _is_null_value(val: str) -> bool:
-    """Robust null-check — the model's 'none' often arrives dressed up:
-    'none.', 'None!', ' none ', etc. An exact-match check misses these
-    and silently stores a null result as if it were real content,
+    """Robust null-check — the model's 'nothing' often arrives dressed up:
+    '(nothing)', 'Nothing.', ' none ', etc. An exact-match check misses
+    these and silently stores a null result as if it were real content,
     breaking the 'quiet cycles leave no trace' guarantee."""
-    normalized = val.lower().strip(" .!?\"'")
+    normalized = val.lower().strip(" .!?\"'()")
     return (not normalized) or (normalized in _NULL_VALUES)
 
 
 def parse_contemplation(text: str) -> dict:
-    """Extract INSIGHT: and MESSAGE: lines. Either may be absent/none."""
-    insight = None
+    """Extract an optional [message]...[/message] block — the model's own
+    choice to flag something as outbound — and treat everything else as
+    a single raw private thought. No forced categorization: the model
+    decides what it's thinking and whether any of it is meant for Gaius.
+    Either may be absent/null."""
     message = None
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.upper().startswith("INSIGHT:"):
-            val = stripped[len("INSIGHT:"):].strip()
-            if not _is_null_value(val):
-                insight = val
-        elif stripped.upper().startswith("MESSAGE:"):
-            val = stripped[len("MESSAGE:"):].strip()
-            if not _is_null_value(val):
-                message = val
-    return {"insight": insight, "message": message, "raw": text}
+    match = _MESSAGE_TAG_RE.search(text)
+    remainder = text
+    if match:
+        candidate = match.group(1).strip()
+        if not _is_null_value(candidate):
+            message = candidate
+        remainder = _MESSAGE_TAG_RE.sub("", text)
+
+    thought = remainder.strip()
+    if _is_null_value(thought):
+        thought = None
+
+    return {"thought": thought, "message": message, "raw": text}
 
 
-def store_memory(client: httpx.Client, text: str, memory_type: str, importance: int) -> dict:
+def store_memory(
+    client: httpx.Client,
+    text: str,
+    memory_type: str,
+    importance: int,
+    collection_name: str | None = INTROSPECTIONS_COLLECTION,
+) -> dict:
+    """Store a piece of heartbeat output. collection_name defaults to
+    thalia_introspections (private synthesized reflection) but callers
+    pass None for outbound messages, which must land in the default
+    memory collection (thalia_memories) — that's the only collection
+    memory_context's pull-based delivery mechanism scans for pending,
+    undelivered messages. A message stored anywhere else would never
+    reach Gaius through the normal delivery path."""
     payload = {
         "text": text,
         "memory_type": memory_type,
@@ -334,7 +386,7 @@ def store_memory(client: httpx.Client, text: str, memory_type: str, importance: 
         "emotional_tone": "heartbeat-synthesis",
         "participants": ["thalia"],
         "session_id": f"heartbeat-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
-        "collection_name": INTROSPECTIONS_COLLECTION,
+        "collection_name": collection_name,
     }
     resp = client.post(f"{MCP_BASE}/api/memory/ingest", json=payload, timeout=10)
     resp.raise_for_status()
@@ -409,45 +461,53 @@ def main():
                 print(f"[heartbeat] Raw response ({elapsed:.1f}s):\n{raw}\n")
 
             # --- Tripwire checks, before anything is stored ---
-            combined_text = " ".join(filter(None, [parsed["insight"], parsed["message"]]))
+            combined_text = " ".join(filter(None, [parsed["thought"], parsed["message"]]))
             distress_hit = _check_distress(combined_text) if combined_text else None
             repetition_hit = (
-                _check_repetition(parsed["insight"], state.get("recent_insights", []))
-                if parsed["insight"] else None
+                _check_repetition(parsed["thought"], state.get("recent_thoughts", []))
+                if parsed["thought"] else None
             )
 
             if distress_hit:
                 _pause(state, f"distress marker matched: '{distress_hit}' in: {combined_text[:200]}")
                 return
             if repetition_hit:
-                _pause(state, f"repetition loop: {repetition_hit}. Latest: {parsed['insight'][:200]}")
+                _pause(state, f"repetition loop: {repetition_hit}. Latest: {parsed['thought'][:200]}")
                 return
 
             stored = []
 
-            if parsed["insight"]:
-                print(f"[heartbeat] INSIGHT: {parsed['insight']}")
+            if parsed["thought"]:
+                print(f"[heartbeat] THOUGHT: {parsed['thought']}")
                 if not args.dry_run:
-                    result = store_memory(client, parsed["insight"], "insight", MAX_INSIGHT_IMPORTANCE)
-                    stored.append(("insight", result))
-                    recent = state.get("recent_insights", [])
-                    recent.append(parsed["insight"])
-                    state["recent_insights"] = recent[-RECENT_INSIGHTS_KEEP:]
+                    # Private reflection — lives in thalia_introspections,
+                    # separate from lived memory.
+                    result = store_memory(client, parsed["thought"], "thought", MAX_THOUGHT_IMPORTANCE)
+                    stored.append(("thought", result))
+                    recent = state.get("recent_thoughts", [])
+                    recent.append(parsed["thought"])
+                    state["recent_thoughts"] = recent[-RECENT_THOUGHTS_KEEP:]
                     _save_state(state)
 
             if parsed["message"] and message_allowed:
                 print(f"[heartbeat] MESSAGE: {parsed['message']}")
                 if not args.dry_run:
-                    result = store_memory(client, parsed["message"], "message", MAX_MESSAGE_IMPORTANCE)
+                    # Outbound — must land in the default collection
+                    # (thalia_memories), the only one memory_context's
+                    # pull-based delivery mechanism scans.
+                    result = store_memory(
+                        client, parsed["message"], "message", MAX_MESSAGE_IMPORTANCE,
+                        collection_name=None,
+                    )
                     stored.append(("message", result))
             elif parsed["message"] and not message_allowed:
-                # Model produced a message despite being told quota was
-                # used — downgrade to private insight rather than discard
-                # the thought entirely or violate the cap.
-                print(f"[heartbeat] MESSAGE attempted but quota used — storing as insight instead: {parsed['message']}")
+                # Model tagged something as a message despite being told
+                # quota was used — downgrade to a private thought rather
+                # than discard it entirely or violate the daily cap.
+                print(f"[heartbeat] MESSAGE attempted but quota used — storing as private thought instead: {parsed['message']}")
                 if not args.dry_run:
-                    result = store_memory(client, parsed["message"], "insight", MAX_INSIGHT_IMPORTANCE)
-                    stored.append(("insight (downgraded from message)", result))
+                    result = store_memory(client, parsed["message"], "thought", MAX_THOUGHT_IMPORTANCE)
+                    stored.append(("thought (downgraded from message)", result))
 
             if not stored and not args.dry_run:
                 print("[heartbeat] Quiet cycle — nothing crystallized. No trace stored. This is fine.")
