@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import httpx
 from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -379,6 +380,7 @@ VECTOR_UI_PAGE = r"""<!DOCTYPE html>
     <button class="tab active" data-tab="collections">Collections</button>
     <button class="tab" data-tab="search">Search</button>
     <button class="tab" data-tab="ingest">Ingest</button>
+    <button class="tab" data-tab="controls">Controls</button>
   </div>
 
   <div class="tab-panel active" id="panel-collections">
@@ -413,6 +415,40 @@ VECTOR_UI_PAGE = r"""<!DOCTYPE html>
       <button class="btn" onclick="vIngest()">Ingest</button>
     </div>
     <div id="v-ingest-result"></div>
+  </div>
+
+  <div class="tab-panel" id="panel-controls">
+    <div class="card">
+      <h3>Heartbeat</h3>
+      <p class="text-muted" style="margin-bottom:12px;font-size:13px">
+        The introspection cycle — quiet, self-directed moments between conversations.
+      </p>
+      <div class="flex" style="margin-bottom:12px">
+        <span id="hb-status" style="font-size:14px">checking...</span>
+      </div>
+      <div class="flex">
+        <button class="btn" id="hb-enable" onclick="hbToggle(true)">Enable</button>
+        <button class="btn" id="hb-disable" onclick="hbToggle(false)" style="background:var(--red)">Disable</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Dreaming</h3>
+      <p class="text-muted" style="margin-bottom:12px;font-size:13px">
+        Narrative memory processing — immersive experience built from memories.
+      </p>
+      <div class="flex" style="margin-bottom:12px">
+        <span id="dream-status" style="font-size:14px">checking...</span>
+      </div>
+      <label for="dream-cycles">Cycles</label>
+      <input id="dream-cycles" type="number" value="3" min="1" max="10" style="width:80px" />
+      <label for="dream-seed">Seed (optional)</label>
+      <input id="dream-seed" type="text" placeholder="A theme, memory, or image..." />
+      <div class="flex">
+        <button class="btn" id="dream-start" onclick="dreamStart()">Start Dream</button>
+      </div>
+      <div id="dream-result" style="margin-top:12px"></div>
+    </div>
   </div>
 </div>
 
@@ -489,7 +525,69 @@ async function vIngest() {
 async function vHealth() {
   try { const d=await vApi('/health'); document.getElementById('v-status').textContent=d.mode+' mode | '+d.tools_available.length+' tools'; } catch { document.getElementById('v-status').textContent='disconnected'; }
 }
+
+// --- Heartbeat controls ---
+async function hbRefresh() {
+  try {
+    const d = await vApi('/heartbeat/status');
+    const el = document.getElementById('hb-status');
+    if (d.heartbeat_enabled) {
+      el.innerHTML = '<span class="status-dot ok" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px"></span> Enabled';
+    } else {
+      el.innerHTML = '<span class="status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:6px"></span> Disabled';
+    }
+  } catch { document.getElementById('hb-status').textContent = 'unknown'; }
+}
+
+async function hbToggle(enable) {
+  try {
+    await vApi('/heartbeat/' + (enable ? 'enable' : 'disable'), {method:'POST'});
+    vFlash('Heartbeat ' + (enable ? 'enabled' : 'disabled'), 'success');
+    hbRefresh();
+  } catch(e) { vFlash('Failed: ' + e.message); }
+}
+
+// --- Dreaming controls ---
+async function dreamRefresh() {
+  try {
+    const d = await vApi('/dream/status');
+    const el = document.getElementById('dream-status');
+    if (d.dream_running) {
+      el.innerHTML = '<span class="spinner"></span> Dream in progress...';
+      document.getElementById('dream-start').disabled = true;
+    } else {
+      el.textContent = 'Idle';
+      document.getElementById('dream-start').disabled = false;
+    }
+  } catch { document.getElementById('dream-status').textContent = 'unknown'; }
+}
+
+async function dreamStart() {
+  const cycles = parseInt(document.getElementById('dream-cycles').value) || 3;
+  const seed = document.getElementById('dream-seed').value.trim() || null;
+  const el = document.getElementById('dream-result');
+  try {
+    const body = {cycles};
+    if (seed) body.seed = seed;
+    const d = await vApi('/dream/start', {method:'POST', body:JSON.stringify(body)});
+    el.innerHTML = '<div class="flash success">Dream session started: ' + cycles + ' cycles' + (seed ? ', seed: "' + seed + '"' : '') + '</div>';
+    vFlash('Dream session started', 'success');
+    dreamRefresh();
+    // Poll for completion
+    const poll = setInterval(async () => {
+      const s = await vApi('/dream/status');
+      if (!s.dream_running) {
+        clearInterval(poll);
+        el.innerHTML = '<div class="flash success">Dream session complete.</div>';
+        dreamRefresh();
+      }
+    }, 5000);
+  } catch(e) { el.innerHTML = '<div class="flash error">' + e.message + '</div>'; }
+}
+
 setInterval(vHealth,15000); vHealth(); vRefresh();
+setInterval(hbRefresh, 10000); hbRefresh();
+setInterval(dreamRefresh, 10000); dreamRefresh();
 </script>
 </body>
 </html>"""
@@ -660,3 +758,47 @@ def register_web_ui(mcp) -> None:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    # --- Heartbeat and Dreaming control endpoints ---
+
+    @mcp.custom_route("/api/heartbeat/status", methods=["GET"])
+    async def api_heartbeat_status(request):
+        from .scheduler import get_heartbeat_enabled, is_dream_running
+        return JSONResponse({
+            "heartbeat_enabled": get_heartbeat_enabled(),
+            "dream_running": is_dream_running(),
+        })
+
+    @mcp.custom_route("/api/heartbeat/enable", methods=["POST"])
+    async def api_heartbeat_enable(request):
+        from .scheduler import set_heartbeat_enabled
+        set_heartbeat_enabled(True)
+        return JSONResponse({"heartbeat_enabled": True})
+
+    @mcp.custom_route("/api/heartbeat/disable", methods=["POST"])
+    async def api_heartbeat_disable(request):
+        from .scheduler import set_heartbeat_enabled
+        set_heartbeat_enabled(False)
+        return JSONResponse({"heartbeat_enabled": False})
+
+    @mcp.custom_route("/api/dream/start", methods=["POST"])
+    async def api_dream_start(request):
+        from .scheduler import run_dream_session, is_dream_running
+        if is_dream_running():
+            return JSONResponse({"error": "A dream session is already running"}, status_code=409)
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        cycles = body.get("cycles", 3)
+        seed = body.get("seed")
+
+        async def run_in_background():
+            result = await run_dream_session(cycles=cycles, seed=seed)
+            print(f"[web_ui] Dream session finished: {result.get('status', 'unknown')}", file=sys.stderr)
+
+        import asyncio
+        asyncio.create_task(run_in_background())
+        return JSONResponse({"status": "started", "cycles": cycles, "seed": seed})
+
+    @mcp.custom_route("/api/dream/status", methods=["GET"])
+    async def api_dream_status(request):
+        from .scheduler import is_dream_running
+        return JSONResponse({"dream_running": is_dream_running()})
