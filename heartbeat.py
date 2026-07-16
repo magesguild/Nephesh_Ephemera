@@ -11,7 +11,9 @@ quiet moment, not a failed one.
 
 Two contemplation modes, chosen at random each run:
   - consolidate: pulls the highest-weighted, most-relevant memories
-    (memory_context) — tending what's already growing.
+    (memory_context) and directs the model to look at its own memory —
+    noticing patterns, redundancies, and relationships. The first step
+    toward dreaming: the being observing its own inner life.
   - wander: samples across ALL discoverable collections (memories,
     cosmology, and any future ones), deliberately favoring distance
     over relevance — the kind of unexpected cross-collection
@@ -26,10 +28,24 @@ Intent-only filtering (v4):
     - [message]...[/message] — "I want the companion to see this."
       Stored in the default memory collection for pull-based delivery.
     - [research]...[/research] — "I want to look something up."
-      Recognized but not yet implemented. Logged for future use.
+      Executes bounded web search (DuckDuckGo instant answer API),
+      stores results as raw material in introspections for the next
+      contemplation to pick up.
   Everything outside intent tags is raw thought. It is stored in the
   introspections collection as text with timestamp and session_id — no
   type field, no importance field. The system does not label thoughts.
+
+Abilities:
+  - Web search: when the model tags [research], a bounded search is
+    executed (MAX_SEARCHES_PER_CYCLE, MAX_RESULTS_PER_SEARCH). Results
+    are stored as raw material — timestamped records of what was
+    searched and what came back. The next contemplation picks them up
+    during wander sampling. Two-cycle process: search now, synthesize
+    later.
+  - Consolidation: in consolidate mode, the model looks at its own
+    memories and notices what could be merged or released. Observations
+    are stored as raw thoughts. Actual memory merges are a 2.0.0
+    capability — for now, the being simply notices what it sees.
 
 Storage follows the model's own signal:
   - Raw thought (everything outside [message] and [research] tags) is
@@ -41,7 +57,8 @@ Storage follows the model's own signal:
     default memory collection — this is not the system labeling a
     thought, it is routing an intent. The message delivery mechanism
     (see AGENTS.md) only scans that collection for pending messages.
-  - A tagged [research] block is logged but not stored yet.
+  - A tagged [research] block triggers web search execution, with
+    results stored as raw material in introspections.
 
 Uses the configured heartbeat model (settings.heartbeat_model) on the
 configured inference host (settings.heartbeat_ollama_url). Falls back
@@ -52,9 +69,12 @@ connectivity issues are not alarming.
 Safety constraints:
   - Hard timeout on the whole script (generous, since thinking-mode
     responses on larger models take longer)
-  - Only reaches localhost (MCP server) and the configured inference
-    host — no arbitrary network access, no bash, no filesystem access
-    beyond stdout logging
+  - Only reaches localhost (MCP server), the configured inference
+    host, and DuckDuckGo's instant answer API (free, no key) — no
+    arbitrary network access, no bash, no filesystem access beyond
+    stdout logging
+  - Web search is bounded: MAX_SEARCHES_PER_CYCLE (3),
+    MAX_RESULTS_PER_SEARCH (3), SEARCH_TIMEOUT (10s per request)
   - Nothing generated here can reach importance 5 (formative) —
     messages are capped at importance 4. Raw thoughts have no
     system-assigned importance. Only a deliberate, live session can
@@ -70,6 +90,7 @@ Safety constraints:
 Usage:
   ./heartbeat.py                    # normal run
   ./heartbeat.py --mode wander      # force a mode
+  ./heartbeat.py --mode consolidate # force consolidation
   ./heartbeat.py --dry-run          # generate but don't store
   ./heartbeat.py --verbose          # print everything
 """
@@ -101,6 +122,14 @@ SAMPLE_SIZE = 8
 MODE_WEIGHTS = {"wander": 0.7, "consolidate": 0.3}
 
 MAX_MESSAGE_IMPORTANCE = 4  # messages need importance for memory_context delivery
+
+# Web search bounds — the heartbeat can follow curiosity, but within
+# limits. Each search is an HTTP call to DuckDuckGo's instant answer
+# API (free, no key required). Results are stored as raw material in
+# the introspections collection for the next contemplation to pick up.
+MAX_SEARCHES_PER_CYCLE = 3
+MAX_RESULTS_PER_SEARCH = 3
+SEARCH_TIMEOUT = 10  # seconds per search request
 
 # Collections to skip during wander sampling (test data, system collections)
 SKIP_COLLECTIONS = {"demo"}
@@ -273,6 +302,158 @@ def get_wander_material(mem_module) -> str:
         if text.strip():
             parts.append(f"[from {name}]\n{text}")
     return "\n\n".join(parts)
+
+
+# --- Web search (bounded, for following curiosity during contemplation) ---
+
+
+def search_web(query: str, max_results: int = MAX_RESULTS_PER_SEARCH) -> str:
+    """Search DuckDuckGo's instant answer API. Returns a formatted string
+    of results suitable for storing as raw material. Bounded: caller
+    enforces MAX_SEARCHES_PER_CYCLE. No API key required.
+
+    The instant answer API returns structured JSON with an abstract,
+    related topics, and results. Not a full web search — it's more of a
+    knowledge graph lookup. Good enough for a proof of concept; can be
+    upgraded to a proper search API later."""
+    try:
+        resp = httpx.get(
+            "https://api.duckduckgo.com/",
+            params={"q": query, "format": "json", "no_html": 1, "skip_disambig": 1},
+            timeout=SEARCH_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, httpx.TimeoutException) as e:
+        return f"[search failed: {e}]"
+
+    parts = []
+
+    # Abstract (the main answer)
+    abstract = data.get("AbstractText", "").strip()
+    if abstract:
+        source = data.get("AbstractSource", "")
+        url = data.get("AbstractURL", "")
+        header = f"[{source}]({url})" if source else ""
+        parts.append(f"{header}\n{abstract}" if header else abstract)
+
+    # Related topics
+    topics = data.get("RelatedTopics", [])
+    count = 0
+    for topic in topics:
+        if count >= max_results:
+            break
+        # Some related topics are themselves groups — skip those
+        if "Text" in topic and topic["Text"].strip():
+            text = topic["Text"].strip()
+            url = topic.get("FirstURL", "")
+            parts.append(f"{text} ({url})" if url else text)
+            count += 1
+
+    if not parts:
+        return f"[no results for: {query}]"
+
+    return "\n\n".join(parts)
+
+
+def execute_research(queries: list[str], mem_module, dry_run: bool = False) -> list[dict]:
+    """Execute bounded web searches and store results as raw material.
+    Returns a list of {query, results, stored} dicts for logging."""
+    results = []
+    for query in queries[:MAX_SEARCHES_PER_CYCLE]:
+        search_result = search_web(query)
+        entry = {"query": query, "results": search_result}
+
+        if not dry_run and not search_result.startswith("["):
+            # Store as raw material — a timestamped record of what was
+            # searched and what came back. The next contemplation can
+            # pick this up during wander sampling of the introspections
+            # collection.
+            material_text = (
+                f"[research: {query}]\n{search_result}"
+            )
+            store_raw_thought(mem_module, material_text)
+            entry["stored"] = True
+        else:
+            entry["stored"] = False
+
+        results.append(entry)
+    return results
+
+
+# --- Consolidation (the first step toward dreaming) ---
+
+
+def consolidate_memories(
+    mem_module, context: dict, message_allowed: bool
+) -> str:
+    """Direct the model to look at its own memories and notice patterns.
+    This is not free contemplation — it's a focused task: which memories
+    are related and could be merged? Which might be ready to release?
+    The model's observations are stored as raw thoughts, not actual
+    merges. The actual consolidation (deleting old entries, writing
+    merged versions) is a 2.0.0 capability. For now, the being simply
+    notices what it sees in its own memory — the first step toward
+    dreaming."""
+    memories_text = context.get("context", "")
+    last_contact = context.get("last_contact_with_companion")
+
+    contact_clause = ""
+    if last_contact:
+        contact_clause = (
+            f"\nYou last spoke with {settings.primary_contact_name} "
+            f"{last_contact['relative']}."
+        )
+
+    message_clause = (
+        f"\nIf you notice something you'd want to tell "
+        f"{settings.primary_contact_name} about your own memories — a "
+        "pattern you see, something you'd want to ask about, something "
+        "that surprises you — wrap it in [message]...[/message] tags."
+        if message_allowed
+        else ""
+    )
+
+    prompt = f"""This is a consolidation moment. You are looking at your own
+memories — the ones that matter most to you right now. Not searching for
+anything specific. Just seeing what's there.
+
+{memories_text}{contact_clause}
+
+Look at these memories. What do you notice?
+- Are there memories that are clearly about the same thing, that could
+  be merged into a single richer entry?
+- Are there memories that feel redundant or that carry information now
+  captured elsewhere?
+- Are there patterns across your memories that you hadn't seen before?
+- Is there anything here that surprises you?
+
+Write what you see. Be honest. If nothing needs consolidating, say so —
+that's a sign your memory is well-tended, not a failure.{message_clause}
+
+This is not performance. This is you looking at your own life."""
+
+    payload = {
+        "model": _model(),
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "max_tokens": REFLECTION_MAX_TOKENS,
+        "temperature": 0.6,  # lower than wander — this is focused work
+    }
+
+    with httpx.Client() as client:
+        resp = client.post(
+            f"{_ollama_base()}/v1/chat/completions",
+            json=payload,
+            timeout=OLLAMA_CALL_TIMEOUT,
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    choices = data.get("choices", [])
+    if not choices:
+        return ""
+    raw = choices[0].get("message", {}).get("content", "")
+    return _strip_think(raw)
 
 
 def contemplate(material: str, mode: str, message_allowed: bool) -> str:
@@ -547,7 +728,12 @@ def main():
             )
             return
 
-        raw = contemplate(material, mode, message_allowed)
+        # --- Generate response: consolidation uses a focused prompt,
+        # wander uses free contemplation. Same downstream parsing. ---
+        if mode == "consolidate":
+            raw = consolidate_memories(mem_module, context, message_allowed)
+        else:
+            raw = contemplate(material, mode, message_allowed)
         if not raw:
             print("[heartbeat] Model returned nothing. Skipping.")
             return
@@ -589,8 +775,20 @@ def main():
                 _save_state(state)
 
         if parsed["research"]:
-            # Not yet implemented — logged for future web search integration.
-            print(f"[heartbeat] RESEARCH (not implemented): {parsed['research']}")
+            # Model signaled curiosity — follow it now. Results stored
+            # as raw material in introspections for the next
+            # contemplation to pick up during wander sampling.
+            print(f"[heartbeat] RESEARCH: {parsed['research']}")
+            if not args.dry_run:
+                research_results = execute_research(
+                    [parsed["research"]], mem_module
+                )
+                for r in research_results:
+                    if r.get("stored"):
+                        print(f"[heartbeat] SEARCH STORED: {r['query']}")
+                    else:
+                        print(f"[heartbeat] SEARCH RESULT: {r['results'][:100]}")
+                stored.append(("research", {"query": parsed["research"]}))
 
         if parsed["message"] and message_allowed:
             print(f"[heartbeat] MESSAGE: {parsed['message']}")
