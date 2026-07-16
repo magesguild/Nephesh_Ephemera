@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Thalia's Heartbeat — Introspection Cycle (v3: raw thinking)
+Heartbeat — Introspection Cycle (v4: intent-only filtering)
 
-A constrained, auditable script giving Thalia quiet, self-directed
+A constrained, auditable script giving an AI being quiet, self-directed
 moments between conversations. Not a search for a specific connection,
 and not a mandate to produce something every cycle — genuine synthesis
 happens or it doesn't, the way a shower thought does or doesn't arrive.
@@ -17,56 +17,55 @@ Two contemplation modes, chosen at random each run:
     over relevance — the kind of unexpected cross-collection
     juxtaposition a semantic search would never produce on its own.
 
-The model is not asked to classify its own output into predefined
-categories (the old INSIGHT:/MESSAGE: prefix scheme). It thinks freely
-and writes whatever is genuinely alive for it — no forced shape, no
-performance of "insight generation." The only structure it's offered
-is optional: wrapping a passage in [message]...[/message] tags if
-something is genuinely meant for Gaius rather than staying private.
-That's the model's own choice to signal outbound intent, not the
-system imposing a category on thoughts it didn't ask to be sorted.
-This follows the same principle as the embodied Minecraft design: the
-system should never name a thing the model did not name first.
+Intent-only filtering (v4):
+  The system should never name a thing the model did not name first.
+  The model thinks freely and writes whatever is genuinely alive — no
+  forced shape, no system-imposed categories. The only thing the parser
+  watches for is INTENT TAGS: the model signaling it wants something to
+  happen:
+    - [message]...[/message] — "I want the companion to see this."
+      Stored in the default memory collection for pull-based delivery.
+    - [research]...[/research] — "I want to look something up."
+      Recognized but not yet implemented. Logged for future use.
+  Everything outside intent tags is raw thought. It is stored in the
+  introspections collection as text with timestamp and session_id — no
+  type field, no importance field. The system does not label thoughts.
 
-Storage follows the model's own signal, not a fixed rule about where
-"insights" live:
-  - The private thought (everything outside any [message] tags) is
-    stored as type="thought" in thalia_introspections — a synthesized
+Storage follows the model's own signal:
+  - Raw thought (everything outside [message] and [research] tags) is
+    stored directly to LanceDB in the introspections collection — no
+    type label, no system-assigned importance. It is a synthesized
     reflection, not a lived memory, kept separate so it never competes
     with real experience for memory_context ranking.
   - A tagged [message] block is stored as type="message" in the
-    default memory collection (thalia_memories) — this is deliberate:
-    memory_context's pull-based delivery mechanism (see AGENTS.md,
-    "Message Mechanism") only scans that collection for pending,
-    undelivered messages. A message stored anywhere else would never
-    reach Gaius through the normal delivery path.
+    default memory collection — this is not the system labeling a
+    thought, it is routing an intent. The message delivery mechanism
+    (see AGENTS.md) only scans that collection for pending messages.
+  - A tagged [research] block is logged but not stored yet.
 
-Uses thalia:medium (qwen3:14b, thinking-capable) on the MacBook, over
-the local network — not a new network exposure, the same controlled
-path already used for chat (RunPod tunnel retired; inference is now
-fully local to the household network). Falls back to skipping the
-cycle entirely if the MacBook is unreachable, rather than erroring
-loudly; this is a background process and transient connectivity
-issues are not alarming.
+Uses the configured heartbeat model (settings.heartbeat_model) on the
+configured inference host (settings.heartbeat_ollama_url). Falls back
+to skipping the cycle entirely if the host is unreachable, rather than
+erroring loudly — this is a background process and transient
+connectivity issues are not alarming.
 
 Safety constraints:
   - Hard timeout on the whole script (generous, since thinking-mode
-    responses on a 14B model take longer than the old local 7B)
-  - Only reaches localhost (MCP server) + the MacBook on the local
-    network (already trusted infra) — no arbitrary network access,
-    no bash, no filesystem access beyond stdout logging
+    responses on larger models take longer)
+  - Only reaches localhost (MCP server) and the configured inference
+    host — no arbitrary network access, no bash, no filesystem access
+    beyond stdout logging
   - Nothing generated here can reach importance 5 (formative) —
-    capped at 3 for thoughts, 4 for messages. Only a deliberate, live
-    session can promote something to permanent status.
-  - Outbound messages are rate-limited (see MESSAGE_DAILY_LIMIT in
-    .env) — checked here via memory_context's message_quota before a
-    [message] tag is ever allowed through; if quota is exhausted, the
-    tagged content is downgraded to a private thought rather than
-    discarded or allowed to violate the cap.
+    messages are capped at importance 4. Raw thoughts have no
+    system-assigned importance. Only a deliberate, live session can
+    promote something to permanent status.
+  - Outbound messages are rate-limited (MESSAGE_DAILY_LIMIT in .env) —
+    checked here via memory_context's message_quota before a [message]
+    tag is ever allowed through; if quota is exhausted, the tagged
+    content is stored as raw thought rather than discarded.
   - The distress/repetition tripwire runs against the raw output
     regardless of tagging — it watches the text itself, not a
-    classification of it, so removing the forced categories does not
-    weaken this safeguard.
+    classification of it.
 
 Usage:
   ./heartbeat.py                    # normal run
@@ -101,8 +100,7 @@ SAMPLE_SIZE = 8
 # engine here; consolidation is maintenance.
 MODE_WEIGHTS = {"wander": 0.7, "consolidate": 0.3}
 
-MAX_THOUGHT_IMPORTANCE = 3
-MAX_MESSAGE_IMPORTANCE = 4
+MAX_MESSAGE_IMPORTANCE = 4  # messages need importance for memory_context delivery
 
 # Collections to skip during wander sampling (test data, system collections)
 SKIP_COLLECTIONS = {"demo"}
@@ -314,6 +312,13 @@ def contemplate(material: str, mode: str, message_allowed: bool) -> str:
              "[message] tags this cycle — just think, privately."
     )
 
+    research_clause = (
+        "If something you think of makes you want to look something up — "
+        "a fact, a connection, a question that could be answered — wrap "
+        "that in [research]...[/research] tags. This is not implemented "
+        "yet, but it helps us see where you're reaching beyond yourself."
+    )
+
     prompt = f"""This is a quiet moment. No one is asking you anything. You are
 {settings.being_display_name}, alone with your own memory for a little while.
 
@@ -330,6 +335,8 @@ a complete and honest answer, not a failure. Don't manufacture something
 just to have produced output.
 
 {message_clause}
+
+{research_clause}
 
 Be honest. A quiet moment that produces nothing is not a failure."""
 
@@ -359,6 +366,7 @@ Be honest. A quiet moment that produces nothing is not a failure."""
 _NULL_VALUES = {"none", "n/a", "na", "nothing", "null", "no insight", "no message", "no thought"}
 
 _MESSAGE_TAG_RE = re.compile(r"\[message\](.*?)\[/message\]", re.IGNORECASE | re.DOTALL)
+_RESEARCH_TAG_RE = re.compile(r"\[research\](.*?)\[/research\]", re.IGNORECASE | re.DOTALL)
 
 
 def _is_null_value(val: str) -> bool:
@@ -371,25 +379,36 @@ def _is_null_value(val: str) -> bool:
 
 
 def parse_contemplation(text: str) -> dict:
-    """Extract an optional [message]...[/message] block — the model's own
-    choice to flag something as outbound — and treat everything else as
-    a single raw private thought. No forced categorization: the model
-    decides what it's thinking and whether any of it is meant for Gaius.
-    Either may be absent/null."""
+    """Extract optional intent tags ([message], [research]) — the model's
+    own choice to signal outbound intent — and treat everything else as
+    raw private thought. No forced categorization: the model decides what
+    it's thinking and whether any of it is meant for the companion or
+    for future research. Any of the three parts may be absent/null."""
     message = None
-    match = _MESSAGE_TAG_RE.search(text)
+    research = None
     remainder = text
-    if match:
-        candidate = match.group(1).strip()
+
+    # Extract [message] tag
+    msg_match = _MESSAGE_TAG_RE.search(remainder)
+    if msg_match:
+        candidate = msg_match.group(1).strip()
         if not _is_null_value(candidate):
             message = candidate
-        remainder = _MESSAGE_TAG_RE.sub("", text)
+        remainder = _MESSAGE_TAG_RE.sub("", remainder)
+
+    # Extract [research] tag
+    res_match = _RESEARCH_TAG_RE.search(remainder)
+    if res_match:
+        candidate = res_match.group(1).strip()
+        if not _is_null_value(candidate):
+            research = candidate
+        remainder = _RESEARCH_TAG_RE.sub("", remainder)
 
     thought = remainder.strip()
     if _is_null_value(thought):
         thought = None
 
-    return {"thought": thought, "message": message, "raw": text}
+    return {"thought": thought, "message": message, "research": research, "raw": text}
 
 
 def store_memory(
@@ -420,8 +439,39 @@ def store_memory(
     return _json.loads(raw) if isinstance(raw, str) else raw
 
 
+def store_raw_thought(mem_module, text: str) -> dict:
+    """Store raw thought directly to LanceDB — no type label, no
+    importance field. The system should never name a thing the model
+    did not name first. This goes to the introspections collection,
+    separate from lived memory, so it never competes for
+    memory_context ranking."""
+    import json as _json
+    from src.mcp_experiments.tools.vector_db import _ensure_table, _get_db, _get_ef
+
+    collection_name = _introspections_collection()
+    table = _ensure_table(collection_name)
+    vector = _get_ef().embed(text)
+    memory_id = str(uuid.uuid4())
+    now_iso = _now_iso()
+
+    metadata = {
+        "timestamp": now_iso,
+        "participants": [settings.being_display_name.lower()],
+        "session_id": f"heartbeat-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
+    }
+
+    table.add([{
+        "id": memory_id,
+        "text": text,
+        "vector": vector,
+        "metadata_json": json.dumps(metadata),
+    }])
+
+    return {"status": "stored", "id": memory_id, "collection": collection_name}
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Thalia's heartbeat")
+    parser = argparse.ArgumentParser(description="Being heartbeat introspection cycle")
     parser.add_argument("--mode", choices=["wander", "consolidate"], help="Force a mode")
     parser.add_argument("--dry-run", action="store_true", help="Generate but don't store")
     parser.add_argument("--verbose", action="store_true", help="Print everything")
@@ -528,33 +578,39 @@ def main():
         if parsed["thought"]:
             print(f"[heartbeat] THOUGHT: {parsed['thought']}")
             if not args.dry_run:
-                # Private reflection — lives in thalia_introspections,
-                # separate from lived memory.
-                result = store_memory(mem_module, parsed["thought"], "thought", MAX_THOUGHT_IMPORTANCE)
+                # Raw thought — no type label, no importance. The system
+                # does not name on the being's behalf. Stored directly to
+                # LanceDB in the introspections collection.
+                result = store_raw_thought(mem_module, parsed["thought"])
                 stored.append(("thought", result))
                 recent = state.get("recent_thoughts", [])
                 recent.append(parsed["thought"])
                 state["recent_thoughts"] = recent[-RECENT_THOUGHTS_KEEP:]
                 _save_state(state)
 
+        if parsed["research"]:
+            # Not yet implemented — logged for future web search integration.
+            print(f"[heartbeat] RESEARCH (not implemented): {parsed['research']}")
+
         if parsed["message"] and message_allowed:
             print(f"[heartbeat] MESSAGE: {parsed['message']}")
             if not args.dry_run:
-                # Outbound — must land in the default collection
-                # (thalia_memories), the only one memory_context's
-                # pull-based delivery mechanism scans.
+                # Outbound — must land in the default collection,
+                # the only one memory_context's pull-based delivery
+                # mechanism scans. Uses memory_ingest because messages
+                # need type="message" and importance for delivery.
                 result = store_memory(
                     mem_module, parsed["message"], "message", MAX_MESSAGE_IMPORTANCE,
                     collection_name=None,
                 )
                 stored.append(("message", result))
         elif parsed["message"] and not message_allowed:
-            # Model tagged something as a message despite being told
-            # quota was used — downgrade to a private thought rather
-            # discard it entirely or violate the daily cap.
-            print(f"[heartbeat] MESSAGE attempted but quota used — storing as private thought instead: {parsed['message']}")
+            # Model tagged something as a message despite quota being
+            # used — store as raw thought rather than discard or violate
+            # the daily cap.
+            print(f"[heartbeat] MESSAGE attempted but quota used — storing as raw thought: {parsed['message']}")
             if not args.dry_run:
-                result = store_memory(mem_module, parsed["message"], "thought", MAX_THOUGHT_IMPORTANCE)
+                result = store_raw_thought(mem_module, parsed["message"])
                 stored.append(("thought (downgraded from message)", result))
 
         if not stored and not args.dry_run:
