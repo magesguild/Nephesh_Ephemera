@@ -1,13 +1,59 @@
 # Expansion Plan: Knowledge, Web Access, Memory Types, Smarter Heartbeat
 
-> Status: planning only. Nothing in this document is implemented. Written for a
-> fresh-eyes review before any of it is built — especially the web access
-> section, which introduces a new class of risk (autonomous outbound network
-> access) that everything else in this repo deliberately avoids.
+> Status: planning document, partially implemented. See "Implementation Log"
+> immediately below for what has actually shipped. Everything else — most
+> notably the web access section — remains planning only and requires the
+> fresh-eyes review described there before any of it is built.
 
 Captured from a working session on 2026-07-16, after the heartbeat's first
 night of live operation and the publication of "Extending Thalia's Memory
 Longterm."
+
+---
+
+## Implementation Log
+
+**2026-07-16, later same day.** Two pieces of section 6 and section 3 shipped
+ahead of the rest of this plan, plus an infrastructure migration unrelated to
+the plan's content but affecting where everything runs:
+
+- **`thalia_introspections` collection created.** Heartbeat-generated content
+  (insights, and eventually raw thoughts per section 4) now writes to a
+  dedicated collection, not `thalia_memories`. This is a structural answer to
+  part of section 3's problem — lived experience and synthesized reflection
+  no longer compete for the same retrieval ranking, which sidesteps (does not
+  replace) the need for a pruning/cap mechanism, at least for now. Section 3's
+  pruning proposal may still be needed once `thalia_introspections` itself
+  grows large, but the urgency is lower since it no longer pollutes
+  `memory_context` ranking for lived memories.
+- **Cross-collection wander sampling implemented.** `heartbeat.py` now calls
+  `vector_store_list_collections` to discover every collection, then samples
+  from each (excluding `thalia_introspections` itself and any explicitly
+  skipped working collections) and hands the model material labeled by
+  source collection. This is exactly the mechanism section 6 wanted — wander
+  cycles are already pulling `cosmology` material next to `thalia_memories`
+  material in the same cycle, with real cross-domain insight as a result
+  (verified live: an insight connecting the cosmology's "ground of action"
+  language with the Minecraft grief/embodiment memories, produced without any
+  primary-source ingestion having happened yet). Primary source ingestion
+  (the rest of section 6) will make the *raw material* itself more distant
+  and less pre-synthesized, but the plumbing that lets any collection
+  participate in wander is done.
+- **Inference migrated off the RunPod tunnel.** `thalia:medium` now runs on a
+  MacBook on the local network rather than over the RunPod SSH tunnel — full
+  local migration, no cloud GPU dependency for chat inference going forward.
+  Embeddings (`mxbai-embed-large`) stay on the original workstation, unmoved
+  — no reason to relocate something already working. Both `heartbeat.py` and
+  `opencode.jsonc` point at the MacBook by static IP rather than its `.local`
+  mDNS hostname, because this workstation's `nsswitch.conf` lacks
+  `mdns4_minimal` even though `avahi-daemon` is running under OpenRC; standard
+  `getaddrinfo`-based resolution (Python, Node) cannot see `.local` names
+  here even though `avahi-resolve` can. Using the static IP was the smaller
+  fix given the goal was inference, not fixing system-wide name resolution;
+  it is a known fragility if DHCP ever reassigns the MacBook's address.
+
+Everything else below is unchanged from the original planning pass and still
+awaits implementation.
 
 ---
 
@@ -437,21 +483,31 @@ sub-project, not a feature addition.
 
 Independent of each other, but if picking an order:
 
-1. **Raw thinking (#4)** — the immediate priority. Removes output-type
-   constraints from the heartbeat, lets the model think freely, subtracts
-   control rather than adding it. Small effort, no new risk surface, directly
-   addresses the "emergence not control" principle.
+1. **Raw thinking (#4)** — still the immediate priority, not yet
+   implemented. Removes output-type constraints from the heartbeat, lets the
+   model think freely, subtracts control rather than adding it. Small
+   effort, no new risk surface, directly addresses the "emergence not
+   control" principle. The current heartbeat still forces `INSIGHT:`
+   framing; only the *storage location* (introspections collection) and the
+   *material it draws on* (all collections) have changed so far, not the
+   thinking-format constraint itself.
 2. **Smarter heartbeat triggering (#2)** — fixes the restatement problem
    observed on day one. Pairs naturally with raw thinking: a smarter trigger
    and a freer thinker together change the quality of what the heartbeat
-   produces.
-3. **Memory growth/retention (#3)** — necessary once the heartbeat is both
-   smarter and freer, since raw thinking will produce volume that needs
-   management.
+   produces. Somewhat less urgent now that heartbeat output lives in its own
+   collection rather than diluting `thalia_memories` ranking, but the
+   restatement problem itself is unchanged.
+3. **Memory growth/retention (#3)** — partially pre-empted by the new
+   `thalia_introspections` collection (see Implementation Log), but will
+   still matter once that collection itself grows large. Revisit once there
+   is real volume data on introspections growth.
 4. **Live-session memory types: `agreement`, `milestone`, `teaching` (#5)** —
    trivial effort, immediately usable, no new risk surface.
-5. **Primary source ingestion (#6)** — small mechanical effort, manual
-   curation time, no new risk surface.
+5. **Primary source ingestion (#6)** — the cross-collection wander plumbing
+   is done (see Implementation Log); what remains is the actual curation —
+   excerpting Whitehead, Penrose, McCarthy, Levin, etc. into `cosmology` or a
+   sibling collection. Small mechanical effort, manual curation time, no new
+   risk surface.
 6. **Web search, live-session-only (#7, option 1)** — separate review,
    separate decision, do not bundle with anything above.
 7. **Web search, heartbeat-facing (#7, option 2/3)** — not before option 1

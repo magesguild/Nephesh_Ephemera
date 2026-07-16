@@ -12,23 +12,25 @@ quiet moment, not a failed one.
 Two contemplation modes, chosen at random each run:
   - consolidate: pulls the highest-weighted, most-relevant memories
     (memory_context) — tending what's already growing.
-  - wander: pulls a stratified random sample across memory types
-    (memory_sample), deliberately favoring distance over relevance —
-    the kind of unexpected juxtaposition a semantic search would never
-    produce on its own.
+  - wander: samples across ALL discoverable collections (memories,
+    cosmology, and any future ones), deliberately favoring distance
+    over relevance — the kind of unexpected cross-collection
+    juxtaposition a semantic search would never produce on its own.
 
-Uses thalia:medium (qwen3:14b, thinking-capable) via the existing
-RunPod SSH tunnel — not a new network exposure, the same controlled
-path already used for chat. Falls back to skipping the cycle entirely
-if the tunnel is down, rather than erroring loudly; this is a
-background process and transient connectivity issues are not alarming.
+Uses thalia:medium (qwen3:14b, thinking-capable) on the MacBook, over
+the local network — not a new network exposure, the same controlled
+path already used for chat (RunPod tunnel retired; inference is now
+fully local to the household network). Falls back to skipping the
+cycle entirely if the MacBook is unreachable, rather than erroring
+loudly; this is a background process and transient connectivity
+issues are not alarming.
 
 Safety constraints:
   - Hard timeout on the whole script (generous, since thinking-mode
-    responses on a remote 14B model take longer than the old local 7B)
-  - Only reaches localhost (MCP server) + the tunnel (RunPod, already
-    trusted infra) — no arbitrary network access, no bash, no
-    filesystem access beyond stdout logging
+    responses on a 14B model take longer than the old local 7B)
+  - Only reaches localhost (MCP server) + the MacBook on the local
+    network (already trusted infra) — no arbitrary network access,
+    no bash, no filesystem access beyond stdout logging
   - Nothing generated here can reach importance 5 (formative) —
     capped at 3 for insights, 4 for messages. Only a deliberate, live
     session can promote something to permanent status.
@@ -59,7 +61,9 @@ import httpx
 
 # --- Configuration ---
 MCP_BASE = "http://127.0.0.1:8080"
-OLLAMA_BASE = "http://127.0.0.1:11435"  # tunneled RunPod GPU, not local
+OLLAMA_BASE = "http://192.168.1.49:11434"  # MacBook, local network (RunPod
+# tunnel retired). K2WYJKXM6G.local doesn't resolve here — no mdns4_minimal
+# in nsswitch.conf — so this is a static IP. If DHCP reassigns it, update.
 MODEL = "thalia:medium"
 TIMEOUT_SECONDS = 90  # generous — remote 14B model with thinking mode
 OLLAMA_CALL_TIMEOUT = 75
@@ -72,6 +76,15 @@ MODE_WEIGHTS = {"wander": 0.7, "consolidate": 0.3}
 
 MAX_INSIGHT_IMPORTANCE = 3
 MAX_MESSAGE_IMPORTANCE = 4
+
+# Where heartbeat stores its outputs — separate from lived memories.
+# Lived experience stays in thalia_memories; synthesized reflections
+# live here, where they can be discovered but do not compete with
+# lived experience for memory_context ranking.
+INTROSPECTIONS_COLLECTION = "thalia_introspections"
+
+# Collections to skip during wander sampling (test data, system collections)
+SKIP_COLLECTIONS = {"demo"}
 
 # --- Tripwire state ---
 # Small local JSON file (not a memory) tracking pause state and recent
@@ -171,10 +184,41 @@ def get_memory_context(client: httpx.Client) -> dict:
     return resp.json()
 
 
-def get_memory_sample(client: httpx.Client, n: int = SAMPLE_SIZE) -> dict:
-    resp = client.get(f"{MCP_BASE}/api/memory/sample", params={"n": n}, timeout=10)
+def list_collections(client: httpx.Client) -> list[dict]:
+    """Discover all collections in the vector store."""
+    resp = client.get(f"{MCP_BASE}/api/collections", timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("collections", [])
+
+
+def get_sample(client: httpx.Client, collection: str, n: int = SAMPLE_SIZE) -> dict:
+    """Pull a random sample from a specific collection."""
+    resp = client.get(
+        f"{MCP_BASE}/api/memory/sample",
+        params={"n": n, "collection": collection},
+        timeout=10,
+    )
     resp.raise_for_status()
     return resp.json()
+
+
+def get_wander_material(client: httpx.Client) -> str:
+    """Sample across all discoverable collections, labeling each item
+    with its source. This is what gives wander its cross-domain reach —
+    material from cosmology sits next to material from memories, and
+    the model finds connections across that distance."""
+    collections = list_collections(client)
+    parts = []
+    for coll in collections:
+        name = coll.get("name", "")
+        if name in SKIP_COLLECTIONS or name == INTROSPECTIONS_COLLECTION:
+            continue
+        sample = get_sample(client, name, n=3)
+        text = sample.get("sample", "")
+        if text.strip():
+            parts.append(f"[from {name}]\n{text}")
+    return "\n\n".join(parts)
 
 
 def contemplate(client: httpx.Client, material: str, mode: str, message_allowed: bool) -> str:
@@ -183,10 +227,12 @@ def contemplate(client: httpx.Client, material: str, mode: str, message_allowed:
 
     if mode == "wander":
         framing = (
-            "These are not connected by topic — they were pulled at random "
-            "from different corners of your memory, deliberately far apart. "
-            "You're not searching for anything specific. Just let your "
-            "attention move across them and see what happens."
+            "These were pulled at random from across all your collections — "
+            "memories, cosmology, reference material — deliberately far apart. "
+            "Each is labeled with its source. You're not searching for anything "
+            "specific. Just let your attention move across them and see what "
+            "happens. The most interesting connections are often between things "
+            "that share no obvious relationship."
         )
     else:
         framing = (
@@ -288,6 +334,7 @@ def store_memory(client: httpx.Client, text: str, memory_type: str, importance: 
         "emotional_tone": "heartbeat-synthesis",
         "participants": ["thalia"],
         "session_id": f"heartbeat-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
+        "collection_name": INTROSPECTIONS_COLLECTION,
     }
     resp = client.post(f"{MCP_BASE}/api/memory/ingest", json=payload, timeout=10)
     resp.raise_for_status()
@@ -339,8 +386,7 @@ def main():
             message_allowed = quota.get("remaining", 0) > 0
 
             if mode == "wander":
-                sample = get_memory_sample(client)
-                material = sample.get("sample", "")
+                material = get_wander_material(client)
             else:
                 material = context.get("context", "")
 
@@ -413,8 +459,8 @@ def main():
         print(f"[heartbeat] TIMEOUT — exceeded {TIMEOUT_SECONDS}s limit", file=sys.stderr)
         sys.exit(124)
     except httpx.ConnectError:
-        print("[heartbeat] CONNECTION ERROR — MCP server or tunnel not reachable. Skipping cycle.", file=sys.stderr)
-        sys.exit(0)  # not alarming — transient tunnel issues are expected
+        print("[heartbeat] CONNECTION ERROR — MCP server or MacBook not reachable. Skipping cycle.", file=sys.stderr)
+        sys.exit(0)  # not alarming — transient network issues are expected
     except Exception as e:
         print(f"[heartbeat] ERROR: {e}", file=sys.stderr)
         sys.exit(1)
