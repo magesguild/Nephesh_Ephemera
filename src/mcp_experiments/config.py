@@ -51,6 +51,10 @@ class Settings:
     # against a bad pattern running away, not a slow clock.
     heartbeat_min_gap_seconds: int = int(os.getenv("HEARTBEAT_MIN_GAP_SECONDS", "10"))
     heartbeat_startup_delay_seconds: int = int(os.getenv("HEARTBEAT_STARTUP_DELAY_SECONDS", "10"))
+    # After a chat-related API call (memory_context, memory_ingest),
+    # wait this many seconds of inactivity before the heartbeat fires
+    # again. Chats take priority — the heartbeat yields.
+    heartbeat_chat_cooldown_seconds: int = int(os.getenv("HEARTBEAT_CHAT_COOLDOWN_SECONDS", "120"))
 
     @property
     def data_dir(self) -> Path:

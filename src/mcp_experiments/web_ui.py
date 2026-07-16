@@ -5,6 +5,7 @@ import json
 import httpx
 from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 
+from .activity import record_activity
 from .config import settings
 from .tools import memory, vector_db
 from .tools import get_registered_names
@@ -553,6 +554,9 @@ def register_web_ui(mcp) -> None:
     async def api_memory_ingest(request):
         # REST shortcut for memory_ingest — used by the heartbeat script
         # and other automated consumers. Same function as the MCP tool.
+        # Also called during live sessions; records activity for heartbeat
+        # scheduling.
+        record_activity()
         try:
             body = await request.json()
             return JSONResponse(json.loads(await memory.memory_ingest(
@@ -587,6 +591,8 @@ def register_web_ui(mcp) -> None:
         # Used by the OpenCode memory plugin for passive injection at
         # session start / after compaction. Not part of the MCP tool
         # surface — a lightweight HTTP shortcut to the same function.
+        # Records activity so the heartbeat yields to active chat.
+        record_activity()
         try:
             limit = request.query_params.get("limit")
             collection = request.query_params.get("collection")

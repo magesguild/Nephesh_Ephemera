@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
+from .activity import seconds_since_last_activity
 from .config import settings
 
 HEARTBEAT_SCRIPT = Path(__file__).resolve().parent.parent.parent / "heartbeat.py"
@@ -64,6 +65,20 @@ async def _heartbeat_loop() -> None:
     # before the first cycle fires, rather than racing server startup.
     await asyncio.sleep(settings.heartbeat_startup_delay_seconds)
     while True:
+        # Yield to active chat — if a human is present (recent API call
+        # to memory_context or memory_ingest), skip this cycle and wait.
+        # The heartbeat is background work; chat is the foreground.
+        elapsed = seconds_since_last_activity()
+        if elapsed < settings.heartbeat_chat_cooldown_seconds:
+            wait = settings.heartbeat_chat_cooldown_seconds - elapsed
+            print(
+                f"[scheduler] Chat active (last activity {elapsed:.0f}s ago), "
+                f"skipping heartbeat, retrying in {wait:.0f}s",
+                file=sys.stderr,
+            )
+            await asyncio.sleep(wait)
+            continue
+
         await _run_one_heartbeat()
         # This is the ONLY throttle beyond the model's own response time
         # (~20-40s per cycle) — deliberately small. The tripwire (see
