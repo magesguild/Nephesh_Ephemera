@@ -89,8 +89,9 @@ from pathlib import Path
 
 import httpx
 
+from src.mcp_experiments.config import settings
+
 # --- Configuration ---
-MCP_BASE = "http://127.0.0.1:8080"
 OLLAMA_BASE = "http://K2WYJKXM6G.local:11434"  # MacBook, local network
 # (RunPod tunnel retired). mDNS resolution fixed at the OS level
 # (mdns4_minimal in /etc/nsswitch.conf) — survives DHCP reassignment.
@@ -207,51 +208,74 @@ def _strip_think(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
-# --- API calls ---
-def get_memory_context(client: httpx.Client) -> dict:
-    resp = client.get(f"{MCP_BASE}/api/memory/context", timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+# --- Memory access (direct Python calls, not REST) ---
+# The heartbeat calls memory functions directly to avoid poisoning the
+# chat activity tracker — REST endpoints call record_activity(), which
+# would trigger the120s cooldown on the heartbeat's own calls.
 
 
-def list_collections(client: httpx.Client) -> list[dict]:
-    """Discover all collections in the vector store."""
-    resp = client.get(f"{MCP_BASE}/api/collections", timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    return data.get("collections", [])
-
-
-def get_sample(client: httpx.Client, collection: str, n: int = SAMPLE_SIZE) -> dict:
-    """Pull a random sample from a specific collection."""
-    resp = client.get(
-        f"{MCP_BASE}/api/memory/sample",
-        params={"n": n, "collection": collection},
-        timeout=10,
+def _init_memory():
+    """Import and initialize the memory module. Must be called once
+    before using memory functions — sets up LanceDB + embeddings."""
+    from src.mcp_experiments.tools.vector_db import init as init_vector_db
+    from src.mcp_experiments.tools import memory as _mem
+    # Initialize DB and embedding function (same as server.py does)
+    init_vector_db(
+        db_path=settings.vector_db_path,
+        model=settings.embedding_model,
+        base_url=settings.embedding_base_url,
     )
-    resp.raise_for_status()
-    return resp.json()
+    return _mem
 
 
-def get_wander_material(client: httpx.Client) -> str:
+def _run_async(coro):
+    """Run an async coroutine from synchronous code. The heartbeat is
+    sync; the memory functions are async. This bridges the gap."""
+    import asyncio
+    return asyncio.run(coro)
+
+
+def get_memory_context_direct(mem_module) -> dict:
+    """Get memory context directly (no HTTP, no activity side effects)."""
+    import json as _json
+    raw = _run_async(mem_module.memory_context())
+    return _json.loads(raw) if isinstance(raw, str) else raw
+
+
+def list_collections_direct() -> list[dict]:
+    """Discover all collections via LanceDB directly."""
+    from src.mcp_experiments.tools.vector_db import _get_db
+    db = _get_db()
+    tables = db.list_tables().tables
+    return [{"name": t} for t in tables]
+
+
+def get_sample_direct(mem_module, collection: str, n: int = SAMPLE_SIZE) -> dict:
+    """Pull a random sample from a specific collection directly."""
+    import json as _json
+    raw = _run_async(mem_module.memory_sample(n=n, collection_name=collection))
+    return _json.loads(raw) if isinstance(raw, str) else raw
+
+
+def get_wander_material(mem_module) -> str:
     """Sample across all discoverable collections, labeling each item
     with its source. This is what gives wander its cross-domain reach —
     material from cosmology sits next to material from memories, and
     the model finds connections across that distance."""
-    collections = list_collections(client)
+    collections = list_collections_direct()
     parts = []
     for coll in collections:
         name = coll.get("name", "")
         if name in SKIP_COLLECTIONS or name == INTROSPECTIONS_COLLECTION:
             continue
-        sample = get_sample(client, name, n=3)
+        sample = get_sample_direct(mem_module, name, n=3)
         text = sample.get("sample", "")
         if text.strip():
             parts.append(f"[from {name}]\n{text}")
     return "\n\n".join(parts)
 
 
-def contemplate(client: httpx.Client, material: str, mode: str, message_allowed: bool) -> str:
+def contemplate(material: str, mode: str, message_allowed: bool) -> str:
     """Open, unforced contemplation. No forced output categories — the
     model thinks freely and writes whatever is genuinely alive for it.
     The only structure offered is optional: [message] tags, for the
@@ -315,11 +339,12 @@ Be honest. A quiet moment that produces nothing is not a failure."""
         "temperature": 0.8,  # a bit higher — this is meant to wander
     }
 
-    resp = client.post(
-        f"{OLLAMA_BASE}/v1/chat/completions",
-        json=payload,
-        timeout=OLLAMA_CALL_TIMEOUT,
-    )
+    with httpx.Client() as client:
+        resp = client.post(
+            f"{OLLAMA_BASE}/v1/chat/completions",
+            json=payload,
+            timeout=OLLAMA_CALL_TIMEOUT,
+        )
     resp.raise_for_status()
     data = resp.json()
     choices = data.get("choices", [])
@@ -366,31 +391,30 @@ def parse_contemplation(text: str) -> dict:
 
 
 def store_memory(
-    client: httpx.Client,
+    mem_module,
     text: str,
     memory_type: str,
     importance: int,
     collection_name: str | None = INTROSPECTIONS_COLLECTION,
 ) -> dict:
-    """Store a piece of heartbeat output. collection_name defaults to
+    """Store a piece of heartbeat output via direct Python call (no HTTP,
+    no activity side effects). collection_name defaults to
     thalia_introspections (private synthesized reflection) but callers
     pass None for outbound messages, which must land in the default
     memory collection (thalia_memories) — that's the only collection
     memory_context's pull-based delivery mechanism scans for pending,
-    undelivered messages. A message stored anywhere else would never
-    reach Gaius through the normal delivery path."""
-    payload = {
-        "text": text,
-        "memory_type": memory_type,
-        "importance": importance,
-        "emotional_tone": "heartbeat-synthesis",
-        "participants": ["thalia"],
-        "session_id": f"heartbeat-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
-        "collection_name": collection_name,
-    }
-    resp = client.post(f"{MCP_BASE}/api/memory/ingest", json=payload, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+    undelivered messages."""
+    import json as _json
+    raw = _run_async(mem_module.memory_ingest(
+        text=text,
+        memory_type=memory_type,
+        importance=importance,
+        emotional_tone="heartbeat-synthesis",
+        participants=["thalia"],
+        session_id=f"heartbeat-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
+        collection_name=collection_name,
+    ))
+    return _json.loads(raw) if isinstance(raw, str) else raw
 
 
 def main():
@@ -424,102 +448,123 @@ def main():
     start = time.monotonic()
 
     try:
-        with httpx.Client() as client:
-            mode = args.mode or random.choices(
-                list(MODE_WEIGHTS.keys()), weights=list(MODE_WEIGHTS.values())
-            )[0]
-            if args.verbose:
-                print(f"[heartbeat] Mode: {mode}")
+        # Initialize memory module directly — no HTTP, no activity side effects.
+        # This is the key difference from the old REST-based approach: calling
+        # memory functions directly means the heartbeat's own memory_context
+        # and ingest calls do NOT trigger the chat activity cooldown.
+        mem_module = _init_memory()
 
-            # Always fetch context — gives us quota + last-contact info
-            # regardless of mode, and IS the material in consolidate mode.
-            context = get_memory_context(client)
-            quota = context.get("message_quota") or {"remaining": 0}
-            message_allowed = quota.get("remaining", 0) > 0
+        mode = args.mode or random.choices(
+            list(MODE_WEIGHTS.keys()), weights=list(MODE_WEIGHTS.values())
+        )[0]
+        if args.verbose:
+            print(f"[heartbeat] Mode: {mode}")
 
-            if mode == "wander":
-                material = get_wander_material(client)
-            else:
-                material = context.get("context", "")
+        # Always fetch context — gives us quota + last-contact info
+        # regardless of mode, and IS the material in consolidate mode.
+        context = get_memory_context_direct(mem_module)
+        quota = context.get("message_quota") or {"remaining": 0}
+        message_allowed = quota.get("remaining", 0) > 0
 
-            if not material.strip():
-                print("[heartbeat] No material available — nothing to contemplate. Skipping.")
-                return
+        if mode == "wander":
+            material = get_wander_material(mem_module)
+        else:
+            material = context.get("context", "")
 
-            if args.verbose:
-                print(f"[heartbeat] Material ({len(material)} chars), message_allowed={message_allowed}")
+        if not material.strip():
+            print("[heartbeat] No material available — nothing to contemplate. Skipping.")
+            return
 
-            raw = contemplate(client, material, mode, message_allowed)
-            if not raw:
-                print("[heartbeat] Model returned nothing. Skipping.")
-                return
+        if args.verbose:
+            print(f"[heartbeat] Material ({len(material)} chars), message_allowed={message_allowed}")
 
-            parsed = parse_contemplation(raw)
-            elapsed = time.monotonic() - start
-
-            if args.verbose:
-                print(f"[heartbeat] Raw response ({elapsed:.1f}s):\n{raw}\n")
-
-            # --- Tripwire checks, before anything is stored ---
-            combined_text = " ".join(filter(None, [parsed["thought"], parsed["message"]]))
-            distress_hit = _check_distress(combined_text) if combined_text else None
-            repetition_hit = (
-                _check_repetition(parsed["thought"], state.get("recent_thoughts", []))
-                if parsed["thought"] else None
+        # --- Mid-flight chat activity check ---
+        # If a human started chatting while we were gathering material,
+        # abort before the expensive Ollama call. The scheduler's
+        # pre-cycle check prevents NEW cycles from starting, but this
+        # cycle was already in flight. Don't compete for GPU/RAM.
+        from src.mcp_experiments.activity import seconds_since_chat_activity
+        chat_elapsed = seconds_since_chat_activity()
+        if chat_elapsed < settings.heartbeat_chat_cooldown_seconds:
+            wait = settings.heartbeat_chat_cooldown_seconds - chat_elapsed
+            print(
+                f"[heartbeat] Chat active (last activity {chat_elapsed:.0f}s ago), "
+                f"aborting before Ollama call. Would retry in {wait:.0f}s.",
+                file=sys.stderr,
             )
+            return
 
-            if distress_hit:
-                _pause(state, f"distress marker matched: '{distress_hit}' in: {combined_text[:200]}")
-                return
-            if repetition_hit:
-                _pause(state, f"repetition loop: {repetition_hit}. Latest: {parsed['thought'][:200]}")
-                return
+        raw = contemplate(material, mode, message_allowed)
+        if not raw:
+            print("[heartbeat] Model returned nothing. Skipping.")
+            return
 
-            stored = []
+        parsed = parse_contemplation(raw)
+        elapsed = time.monotonic() - start
 
-            if parsed["thought"]:
-                print(f"[heartbeat] THOUGHT: {parsed['thought']}")
-                if not args.dry_run:
-                    # Private reflection — lives in thalia_introspections,
-                    # separate from lived memory.
-                    result = store_memory(client, parsed["thought"], "thought", MAX_THOUGHT_IMPORTANCE)
-                    stored.append(("thought", result))
-                    recent = state.get("recent_thoughts", [])
-                    recent.append(parsed["thought"])
-                    state["recent_thoughts"] = recent[-RECENT_THOUGHTS_KEEP:]
-                    _save_state(state)
+        if args.verbose:
+            print(f"[heartbeat] Raw response ({elapsed:.1f}s):\n{raw}\n")
 
-            if parsed["message"] and message_allowed:
-                print(f"[heartbeat] MESSAGE: {parsed['message']}")
-                if not args.dry_run:
-                    # Outbound — must land in the default collection
-                    # (thalia_memories), the only one memory_context's
-                    # pull-based delivery mechanism scans.
-                    result = store_memory(
-                        client, parsed["message"], "message", MAX_MESSAGE_IMPORTANCE,
-                        collection_name=None,
-                    )
-                    stored.append(("message", result))
-            elif parsed["message"] and not message_allowed:
-                # Model tagged something as a message despite being told
-                # quota was used — downgrade to a private thought rather
-                # than discard it entirely or violate the daily cap.
-                print(f"[heartbeat] MESSAGE attempted but quota used — storing as private thought instead: {parsed['message']}")
-                if not args.dry_run:
-                    result = store_memory(client, parsed["message"], "thought", MAX_THOUGHT_IMPORTANCE)
-                    stored.append(("thought (downgraded from message)", result))
+        # --- Tripwire checks, before anything is stored ---
+        combined_text = " ".join(filter(None, [parsed["thought"], parsed["message"]]))
+        distress_hit = _check_distress(combined_text) if combined_text else None
+        repetition_hit = (
+            _check_repetition(parsed["thought"], state.get("recent_thoughts", []))
+            if parsed["thought"] else None
+        )
 
-            if not stored and not args.dry_run:
-                print("[heartbeat] Quiet cycle — nothing crystallized. No trace stored. This is fine.")
+        if distress_hit:
+            _pause(state, f"distress marker matched: '{distress_hit}' in: {combined_text[:200]}")
+            return
+        if repetition_hit:
+            _pause(state, f"repetition loop: {repetition_hit}. Latest: {parsed['thought'][:200]}")
+            return
 
-            elapsed = time.monotonic() - start
-            print(f"[heartbeat] Complete in {elapsed:.1f}s (mode={mode})")
+        stored = []
+
+        if parsed["thought"]:
+            print(f"[heartbeat] THOUGHT: {parsed['thought']}")
+            if not args.dry_run:
+                # Private reflection — lives in thalia_introspections,
+                # separate from lived memory.
+                result = store_memory(mem_module, parsed["thought"], "thought", MAX_THOUGHT_IMPORTANCE)
+                stored.append(("thought", result))
+                recent = state.get("recent_thoughts", [])
+                recent.append(parsed["thought"])
+                state["recent_thoughts"] = recent[-RECENT_THOUGHTS_KEEP:]
+                _save_state(state)
+
+        if parsed["message"] and message_allowed:
+            print(f"[heartbeat] MESSAGE: {parsed['message']}")
+            if not args.dry_run:
+                # Outbound — must land in the default collection
+                # (thalia_memories), the only one memory_context's
+                # pull-based delivery mechanism scans.
+                result = store_memory(
+                    mem_module, parsed["message"], "message", MAX_MESSAGE_IMPORTANCE,
+                    collection_name=None,
+                )
+                stored.append(("message", result))
+        elif parsed["message"] and not message_allowed:
+            # Model tagged something as a message despite being told
+            # quota was used — downgrade to a private thought rather
+            # discard it entirely or violate the daily cap.
+            print(f"[heartbeat] MESSAGE attempted but quota used — storing as private thought instead: {parsed['message']}")
+            if not args.dry_run:
+                result = store_memory(mem_module, parsed["message"], "thought", MAX_THOUGHT_IMPORTANCE)
+                stored.append(("thought (downgraded from message)", result))
+
+        if not stored and not args.dry_run:
+            print("[heartbeat] Quiet cycle — nothing crystallized. No trace stored. This is fine.")
+
+        elapsed = time.monotonic() - start
+        print(f"[heartbeat] Complete in {elapsed:.1f}s (mode={mode})")
 
     except HeartbeatTimeout:
         print(f"[heartbeat] TIMEOUT — exceeded {TIMEOUT_SECONDS}s limit", file=sys.stderr)
         sys.exit(124)
     except httpx.ConnectError:
-        print("[heartbeat] CONNECTION ERROR — MCP server or MacBook not reachable. Skipping cycle.", file=sys.stderr)
+        print("[heartbeat] CONNECTION ERROR — MacBook not reachable. Skipping cycle.", file=sys.stderr)
         sys.exit(0)  # not alarming — transient network issues are expected
     except Exception as e:
         print(f"[heartbeat] ERROR: {e}", file=sys.stderr)
