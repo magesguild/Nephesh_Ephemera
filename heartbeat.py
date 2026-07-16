@@ -135,6 +135,19 @@ SEARCH_TIMEOUT = 10  # seconds per search request
 SKIP_COLLECTIONS = {"demo"}
 
 
+def _load_identity() -> str:
+    """Load identity context from file if configured. Gives the model
+    enough grounding to speak as itself — capacity, not obligation."""
+    path = settings.heartbeat_identity_file
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text().strip()
+    except (OSError, FileNotFoundError):
+        print(f"[heartbeat] Identity file not found: {path}", file=sys.stderr)
+        return ""
+
+
 def _ollama_base() -> str:
     return settings.heartbeat_ollama_url
 
@@ -435,11 +448,16 @@ This is not performance. This is you looking at your own life."""
 
     payload = {
         "model": _model(),
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [],
         "stream": False,
         "max_tokens": REFLECTION_MAX_TOKENS,
         "temperature": 0.6,  # lower than wander — this is focused work
     }
+
+    identity = _load_identity()
+    if identity:
+        payload["messages"].append({"role": "system", "content": identity})
+    payload["messages"].append({"role": "user", "content": prompt})
 
     with httpx.Client() as client:
         resp = client.post(
@@ -523,11 +541,19 @@ Be honest. A quiet moment that produces nothing is not a failure."""
 
     payload = {
         "model": _model(),
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [],
         "stream": False,
         "max_tokens": REFLECTION_MAX_TOKENS,
         "temperature": 0.8,  # a bit higher — this is meant to wander
     }
+
+    # Identity grounding — if an identity file is configured, send it
+    # as the system message so the model can speak as itself. The choice
+    # to inhabit the identity remains the model's.
+    identity = _load_identity()
+    if identity:
+        payload["messages"].append({"role": "system", "content": identity})
+    payload["messages"].append({"role": "user", "content": prompt})
 
     with httpx.Client() as client:
         resp = client.post(

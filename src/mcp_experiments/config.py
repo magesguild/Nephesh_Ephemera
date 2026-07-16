@@ -63,6 +63,13 @@ class Settings:
     introspections_collection_name: str = os.getenv(
         "INTROSPECTIONS_COLLECTION_NAME", "introspections"
     )
+    # Optional path to a file containing the being's identity context
+    # (e.g. the SYSTEM block from a Modelfile). If set, the heartbeat
+    # and dreaming scripts prepend this to their prompts, giving the
+    # model enough grounding to speak as itself. If not set, prompts
+    # use only being_display_name. The choice to inhabit the identity
+    # remains the model's — this gives capacity, not obligation.
+    heartbeat_identity_file: str = os.getenv("HEARTBEAT_IDENTITY_FILE", "")
 
     # Dreaming — a separate process from the heartbeat. Dreams read from
     # memories but write only to this collection. Wander mode samples

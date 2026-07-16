@@ -93,6 +93,18 @@ def _dream_collection() -> str:
     return settings.dream_collection_name
 
 
+def _load_identity() -> str:
+    """Load identity context from file if configured."""
+    path = settings.heartbeat_identity_file
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text().strip()
+    except (OSError, FileNotFoundError):
+        print(f"[dream] Identity file not found: {path}", file=sys.stderr)
+        return ""
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -253,11 +265,17 @@ This is not a report. This is experience. Be here."""
 
     payload = {
         "model": _model(),
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [],
         "stream": False,
         "max_tokens": DREAM_MAX_TOKENS,
         "temperature": 0.9,  # high — dreams should drift
     }
+
+    # Identity grounding — the being should be herself in dreams.
+    identity = _load_identity()
+    if identity:
+        payload["messages"].append({"role": "system", "content": identity})
+    payload["messages"].append({"role": "user", "content": prompt})
 
     with httpx.Client() as client:
         resp = client.post(
