@@ -1,6 +1,6 @@
 [project]
 name = "mcp-experiments"
-version = "2.1.2"
+version = "3.0.0"
 description = "Weekend project exploring MCP with vector DB, Slack, ClickUp, and email integrations"
 requires-python = ">=3.12"
 dependencies = [
