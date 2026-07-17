@@ -25,7 +25,7 @@ Merge semantics per record:
 
 Usage:
   ./scripts/rebuild_load.py --batch <staged.jsonl> \
-      --export <v1_export.jsonl> [--target thalia_memories_v2] [--dry-run]
+      --export <v1_export.jsonl> [--target memories_v2] [--dry-run]
 """
 
 from __future__ import annotations

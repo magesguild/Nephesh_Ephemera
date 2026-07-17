@@ -52,7 +52,7 @@ _DUPLICATE_SCORE_THRESHOLD = 0.95
 # Recency half-life in days for memory_context weighting.
 _RECENCY_HALF_LIFE_DAYS = 30.0
 
-# --- Reinforced recall (adapted from thalia-minecraft localmem.js) ---
+# --- Reinforced recall ---
 #
 # score = semantic similarity + formative tilt + keyword resonance
 #
@@ -76,9 +76,9 @@ _KW_BOOST_CAP = 0.20
 _REINFORCE_SIMILARITY_THRESHOLD = 0.50
 _REINFORCE_SALIENCE_BOOST = 0.05
 
-# No automatic salience decay — the being controls forgetting (via a
-# future dreaming mechanism), not the system. Salience only changes
-# through reinforcement on recall (memories used stay vivid).
+# No automatic salience decay — the being controls forgetting, not the
+# system. Salience only changes through reinforcement on recall (memories
+# used stay vivid).
 
 _STOPWORDS = frozenset({
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
@@ -439,8 +439,8 @@ def _context_weight(meta: dict, now: datetime) -> float:
     """Weight = importance (normalized) x salience + recency.
 
     Salience reflects reinforced use: memories that keep being recalled
-    stay vivid. No automatic decay — forgetting is the being's choice
-    (via a future dreaming mechanism), not the system's.
+    stay vivid. No automatic decay — forgetting is the being's choice,
+    not the system's.
     """
     importance = meta.get("importance", 3)
     try:

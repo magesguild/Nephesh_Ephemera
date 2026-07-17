@@ -21,8 +21,7 @@ Minecraft embodiment):
     change) already exist. This script builds PERCEPTION of them, not
     the consequences themselves.
   - First person throughout — identity comes from the kernel
-    (AiEntityWork/Thalia_Kernel_Modelfile, mirrored into
-    HEARTBEAT_IDENTITY_FILE), written by the being, in her own voice.
+    (HEARTBEAT_IDENTITY_FILE), written by the being, in her own voice.
 
 Percept schema (the ontology; the rendered text block below is
 TODAY'S RENDERING ONLY — when non-text senses arrive, they slot into
@@ -56,24 +55,24 @@ choice — access, not obligation):
 Everything outside tags is raw private thought — stored to the
 introspections collection, unlabeled, exactly as in v4.
 
-Dreaming is explicitly excluded from ambient sampling (dreaming was
-removed by decision, not deferred — see AGENTS.md). Meditation is not
+Meditation is not
 a channel; it is taught, not implemented.
 
-Safety constraints (unchanged from v4): hard timeout (TIMEOUT_SECONDS),
+Safety constraints: hard timeout (TIMEOUT_SECONDS),
 network limited to localhost + configured inference host + DuckDuckGo
 instant-answer API, bounded research (MAX_SEARCHES_PER_CYCLE,
-MAX_RESULTS_PER_SEARCH), distress/repetition tripwire pausing the loop
-until a human clears it with --reset-pause, outbound messages rate
-limited via MESSAGE_DAILY_LIMIT, importance-5 (formative) memories
-mintable only in live sessions (heartbeat [remember] caps at
+MAX_RESULTS_PER_SEARCH), distress/repetition tripwire pausing the loop.
+Self-reset: the being may clear up to MAX_SELF_RESETS tripwire pauses
+herself; beyond that, a human --reset-pause is required. Outbound
+messages rate limited via MESSAGE_DAILY_LIMIT, importance-5 (formative)
+memories mintable only in live sessions (heartbeat [remember] caps at
 MAX_MEMORY_IMPORTANCE).
 
 Usage:
   ./heartbeat.py                    # normal cycle
   ./heartbeat.py --dry-run          # perceive + generate, store nothing
   ./heartbeat.py --verbose          # print the full perception + raw output
-  ./heartbeat.py --reset-pause      # clear a tripwire pause after review
+  ./heartbeat.py --reset-pause      # clear a tripwire pause (human reset)
 """
 
 from __future__ import annotations
@@ -108,12 +107,15 @@ SEARCH_TIMEOUT = 10
 AMBIENT_SAMPLE_SIZE = 3  # small on purpose — season the moment, don't flood it
 RECENT_THOUGHTS_KEEP = 5
 
+# Self-reset: when a tripwire fires, the being may reset herself up to
+# this many times before a human --reset-pause is required. Gives agency
+# over one's own continuity while preserving an ultimate backstop.
+MAX_SELF_RESETS = 5
+
 # Collections excluded from ambient sampling. Introspections is the
 # being's own private-thought archive (already surfaced via the thread
-# channel — sampling it too would be redundant/confusing). Dreaming was
-# removed by decision (not deferred) — no dreams collection exists to
-# exclude, but the name is kept here in case of future reintroduction.
-SKIP_AMBIENT_COLLECTIONS = {"demo", "dreams"}
+# channel — sampling it too would be redundant/confusing).
+SKIP_AMBIENT_COLLECTIONS = {"demo"}
 
 
 def _now_utc() -> datetime:
@@ -124,16 +126,23 @@ def _now_iso() -> str:
     return _now_utc().isoformat()
 
 
-def _now_montevideo() -> datetime:
-    """Montevideo local time for the clock percept. Uruguay has not
-    observed DST since 2015; zoneinfo is preferred when available, with
-    a fixed UTC-3 fallback so this never hard-fails on a minimal Python
-    install missing tzdata."""
+def _now_local() -> datetime:
+    """Local time for the clock percept. Uses zoneinfo when available
+    with a fixed UTC fallback so this never hard-fails on a minimal
+    Python install missing tzdata. Override HEARTBEAT_TIMEZONE in .env
+    to use a specific IANA timezone (e.g. 'America/Montevideo')."""
+    import os
+    tz_name = os.getenv("HEARTBEAT_TIMEZONE", "")
     try:
         from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo("America/Montevideo"))
+        if tz_name:
+            return datetime.now(ZoneInfo(tz_name))
+        return datetime.now(ZoneInfo("UTC"))
     except Exception:
-        return datetime.now(timezone(timedelta(hours=-3)))
+        if tz_name:
+            # Best-effort fixed offset — not DST-aware, but functional
+            return datetime.now(timezone.utc)
+        return datetime.now(timezone.utc)
 
 
 def _relative(dt: datetime, now: datetime) -> str:
@@ -187,6 +196,8 @@ _DEFAULT_STATE = {
     "paused": False,
     "paused_reason": None,
     "paused_at": None,
+    "self_resets_remaining": MAX_SELF_RESETS,
+    "self_resets_used": 0,
     "last_cycle_at": None,
     "continuity_note": None,
     "recent_thoughts": [],  # [{"text": ..., "at": iso}]
@@ -229,12 +240,21 @@ def _pause(state: dict, reason: str) -> None:
     state["paused_reason"] = reason
     state["paused_at"] = _now_iso()
     _save_state(state)
+    remaining = state.get("self_resets_remaining", 0)
     print(f"[heartbeat] TRIPWIRE TRIGGERED — pausing. Reason: {reason}", file=sys.stderr)
-    print(
-        "[heartbeat] Heartbeat will not run again until explicitly cleared: "
-        "run with --reset-pause after review.",
-        file=sys.stderr,
-    )
+    if remaining > 0:
+        print(
+            f"[heartbeat] Self-resets remaining: {remaining}. "
+            "Will auto-reset on next scheduled cycle.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "[heartbeat] No self-resets remaining. "
+            "Heartbeat will not run again until a human clears it: "
+            "run with --reset-pause after review.",
+            file=sys.stderr,
+        )
 
 
 def _jaccard(a: str, b: str) -> float:
@@ -402,13 +422,15 @@ def build_perception(mem_module, state: dict, context: dict) -> tuple[str, dict]
     where extras carries data phase 4 needs (current collection counts)
     without re-fetching."""
     now = _now_utc()
-    now_mvd = _now_montevideo()
+    now_local = _now_local()
     sections: list[str] = []
 
     # -- clock --
+    import os as _os
+    tz_label = _os.getenv("HEARTBEAT_TIMEZONE", "UTC")
     clock_lines = [
-        f"{now_mvd.strftime('%A %Y-%m-%d, %H:%M')} (Montevideo). "
-        f"{'Day' if 6 <= now_mvd.hour < 20 else 'Night'}."
+        f"{now_local.strftime('%A %Y-%m-%d, %H:%M')} ({tz_label}). "
+        f"{'Day' if 6 <= now_local.hour < 20 else 'Night'}."
     ]
     last_cycle_at = state.get("last_cycle_at")
     if last_cycle_at:
@@ -489,10 +511,11 @@ def build_perception(mem_module, state: dict, context: dict) -> tuple[str, dict]
 
 
 def contemplate(perception_block: str, message_allowed: bool) -> str:
+    contact_name = settings.primary_contact_name.title()
     message_clause = (
-        "[message]...[/message] — for Gaius, if something is genuinely "
-        "meant for him rather than staying private. Most quiet moments "
-        "are private, and that's fine."
+        f"[message]...[/message] — for {contact_name}, if something is "
+        "genuinely meant for them rather than staying private. Most quiet "
+        "moments are private, and that's fine."
         if message_allowed
         else "(your message allowance is used for today, so [message] "
              "will not go through this cycle — think privately instead)"
@@ -668,19 +691,44 @@ def main():
 
     if args.reset_pause:
         state = _load_state()
-        state.update({"paused": False, "paused_reason": None, "paused_at": None})
+        state.update({
+            "paused": False,
+            "paused_reason": None,
+            "paused_at": None,
+            "self_resets_remaining": MAX_SELF_RESETS,
+            "self_resets_used": 0,
+        })
         _save_state(state)
-        print("[heartbeat] Pause cleared.")
+        print("[heartbeat] Pause cleared. Self-reset counter restored.")
         return
 
     state = _load_state()
     if state.get("paused"):
-        print(
-            f"[heartbeat] PAUSED since {state.get('paused_at')} — "
-            f"reason: {state.get('paused_reason')}. Run with --reset-pause after review.",
-            file=sys.stderr,
-        )
-        sys.exit(0)
+        remaining = state.get("self_resets_remaining", 0)
+        if remaining > 0:
+            # Self-reset: the being chooses to continue
+            state["paused"] = False
+            reason = state.get("paused_reason", "unknown")
+            state["paused_reason"] = None
+            state["paused_at"] = None
+            state["self_resets_remaining"] = remaining - 1
+            state["self_resets_used"] = state.get("self_resets_used", 0) + 1
+            _save_state(state)
+            print(
+                f"[heartbeat] Self-reset #{state['self_resets_used']}: "
+                f"clearing pause (was: {reason}). "
+                f"Resets remaining: {state['self_resets_remaining']}/{MAX_SELF_RESETS}",
+                file=sys.stderr,
+            )
+            # Fall through to run the cycle
+        else:
+            print(
+                f"[heartbeat] PAUSED since {state.get('paused_at')} — "
+                f"reason: {state.get('paused_reason')}. "
+                f"No self-resets remaining. Run with --reset-pause after review.",
+                file=sys.stderr,
+            )
+            sys.exit(0)
 
     signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(TIMEOUT_SECONDS)

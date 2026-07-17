@@ -3,289 +3,14 @@ from __future__ import annotations
 import json
 import sys
 
-import httpx
-from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
+from starlette.responses import HTMLResponse, JSONResponse
 
 from .activity import record_activity
 from .config import settings
+from .compliance import ServerMode
 from .tools import memory, vector_db
 from .tools import get_registered_names
 
-CHAT_PAGE = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>mcp-experiments</title>
-<style>
-  :root {
-    --bg: #0d1117; --surface: #161b22; --border: #30363d;
-    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
-    --green: #3fb950; --red: #f85149; --radius: 8px;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column;
-  }
-
-  /* header */
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
-  }
-  header h1 { font-size: 16px; font-weight: 600; }
-  header h1 span { color: var(--muted); font-weight: 400; }
-  .header-right { display: flex; align-items: center; gap: 12px; }
-  select {
-    padding: 4px 10px; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); color: var(--text); font-size: 13px;
-  }
-  .status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-  .status-dot.ok { background: var(--green); }
-  .status-dot.err { background: var(--red); }
-  .nav-link { color: var(--muted); font-size: 13px; text-decoration: none; }
-  .nav-link:hover { color: var(--accent); }
-
-  /* messages */
-  #messages {
-    flex: 1; overflow-y: auto; padding: 20px 20px 12px;
-    display: flex; flex-direction: column; gap: 16px;
-  }
-  .msg { max-width: 780px; animation: fadeIn .2s; }
-  .msg.user { align-self: flex-end; }
-  .msg.assistant { align-self: flex-start; }
-  .msg-content {
-    padding: 10px 14px; border-radius: var(--radius); line-height: 1.6;
-    font-size: 14px; word-wrap: break-word; white-space: pre-wrap;
-  }
-  .msg.user .msg-content {
-    background: var(--accent); color: #fff; border-bottom-right-radius: 2px;
-  }
-  .msg.assistant .msg-content {
-    background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 2px;
-  }
-  .msg-label { font-size: 11px; color: var(--muted); margin-bottom: 3px; padding: 0 2px; }
-  .msg.assistant .msg-label { text-align: left; }
-  .msg.user .msg-label { text-align: right; }
-  .cursor { display: inline-block; width: 8px; height: 16px; background: var(--accent); animation: blink .8s step-end infinite; vertical-align: text-bottom; margin-left: 1px; }
-  @keyframes blink { 50% { opacity: 0; } }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-  .empty-state { text-align: center; color: var(--muted); font-size: 14px; margin-top: 20vh; }
-
-  /* input */
-  .input-area {
-    padding: 12px 20px 20px; border-top: 1px solid var(--border); flex-shrink: 0;
-  }
-  .input-row {
-    display: flex; gap: 8px; max-width: 820px; margin: 0 auto;
-  }
-  #input {
-    flex: 1; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); color: var(--text); font-size: 14px; resize: none;
-    font-family: inherit; line-height: 1.5; max-height: 200px; min-height: 42px;
-  }
-  #input:focus { outline: none; border-color: var(--accent); }
-  #input::placeholder { color: var(--muted); }
-  #send {
-    padding: 10px 20px; background: var(--accent); color: #fff; border: none;
-    border-radius: var(--radius); font-size: 14px; font-weight: 500; cursor: pointer;
-    white-space: nowrap; transition: opacity .15s;
-  }
-  #send:hover { opacity: .85; }
-  #send:disabled { opacity: .4; cursor: not-allowed; }
-  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* error toast */
-  #toast { display: none; position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: var(--red); color: #fff; padding: 8px 16px; border-radius: var(--radius); font-size: 13px; z-index: 100; }
-  #toast.show { display: block; }
-
-  /* code blocks in messages */
-  .msg-content pre { background: rgba(0,0,0,.3); padding: 8px 12px; border-radius: 4px; overflow-x: auto; margin: 6px 0; font-size: 12px; }
-  .msg-content code { font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 12px; }
-  .msg-content p { margin: 4px 0; }
-</style>
-</head>
-<body>
-  <header>
-    <h1>mcp-experiments <span>chat</span></h1>
-    <div class="header-right">
-      <span class="status-dot ok" id="status-dot"></span>
-      <select id="model-select">
-        <option value="">Loading models...</option>
-      </select>
-      <a href="/debug" class="nav-link">debug</a>
-    </div>
-  </header>
-
-  <div id="messages">
-    <div class="empty-state" id="empty-state">Send a message to start chatting with <strong>qwen2.5:7b</strong>.</div>
-  </div>
-
-  <div class="input-area">
-    <div class="input-row">
-      <textarea id="input" rows="1" placeholder="Type a message..." enterkeyhint="send"></textarea>
-      <button id="send">Send</button>
-    </div>
-  </div>
-
-  <div id="toast"></div>
-
-<script>
-const MODEL = document.getElementById('model-select');
-const INPUT = document.getElementById('input');
-const SEND = document.getElementById('send');
-const MSGS = document.getElementById('messages');
-const EMPTY = document.getElementById('empty-state');
-const TOAST = document.getElementById('toast');
-const STATUS = document.getElementById('status-dot');
-
-let messages = [];
-let streaming = false;
-
-// Populate model dropdown from Ollama
-(async () => {
-  try {
-    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({model:'__list__', messages:[]})}).catch(()=>null);
-    // Fall back to fetching from Ollama directly via our proxy
-    const tags = await fetch('/api/ollama/tags').then(r=>r.json()).catch(()=>({models:[]}));
-    MODEL.innerHTML = tags.models.map(m => '<option value="'+m.name+'">'+m.name+'</option>').join('');
-    if (!MODEL.options.length) MODEL.innerHTML = '<option value="qwen2.5:7b">qwen2.5:7b</option>';
-  } catch { MODEL.innerHTML = '<option value="qwen2.5:7b">qwen2.5:7b</option>'; }
-})();
-
-function toast(msg) {
-  TOAST.textContent = msg;
-  TOAST.className = 'show';
-  setTimeout(() => TOAST.className = '', 4000);
-}
-
-// Auto-resize textarea
-INPUT.addEventListener('input', () => {
-  INPUT.style.height = 'auto';
-  INPUT.style.height = Math.min(INPUT.scrollHeight, 200) + 'px';
-});
-
-// Send on Enter (Shift+Enter for newline)
-INPUT.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-});
-
-SEND.addEventListener('click', send);
-
-async function send() {
-  const text = INPUT.value.trim();
-  if (!text || streaming) return;
-
-  INPUT.value = ''; INPUT.style.height = 'auto';
-  EMPTY.style.display = 'none';
-
-  // Add user message
-  addMessage('user', text);
-  messages.push({ role: 'user', content: text });
-
-  // Add placeholder assistant message
-  const assistantDiv = addMessage('assistant', '<span class="spinner"></span>');
-  const contentDiv = assistantDiv.querySelector('.msg-content');
-  const model = MODEL.value;
-  streaming = true;
-  setLoading(true);
-
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let fullContent = '';
-
-    contentDiv.innerHTML = '<span class="cursor"></span>';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (!data || data === '[DONE]') continue;
-
-        try {
-          const chunk = JSON.parse(data);
-          const delta = chunk.choices?.[0]?.delta?.content || '';
-          fullContent += delta;
-          contentDiv.innerHTML = escapeHtml(fullContent) + '<span class="cursor"></span>';
-          MSGS.scrollTop = MSGS.scrollHeight;
-        } catch { /* skip malformed chunks */ }
-      }
-    }
-
-    contentDiv.innerHTML = escapeHtml(fullContent) || '(empty response)';
-    messages.push({ role: 'assistant', content: fullContent });
-
-  } catch (e) {
-    contentDiv.innerHTML = '<span style="color:var(--red)">Error: ' + escapeHtml(e.message) + '</span>';
-    toast(e.message);
-  } finally {
-    streaming = false;
-    setLoading(false);
-  }
-}
-
-function addMessage(role, html) {
-  const div = document.createElement('div');
-  div.className = 'msg ' + role;
-  div.innerHTML = '<div class="msg-label">' + (role === 'user' ? 'You' : 'Assistant') + '</div><div class="msg-content">' + html + '</div>';
-  MSGS.appendChild(div);
-  MSGS.scrollTop = MSGS.scrollHeight;
-  return div;
-}
-
-function setLoading(on) {
-  SEND.disabled = on;
-  SEND.textContent = on ? 'Sending...' : 'Send';
-  INPUT.disabled = on;
-}
-
-function escapeHtml(s) {
-  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// Health check
-async function checkHealth() {
-  try {
-    const res = await fetch('/api/health');
-    const data = await res.json();
-    STATUS.className = 'status-dot ok';
-    STATUS.title = data.mode + ' mode';
-  } catch {
-    STATUS.className = 'status-dot err';
-    STATUS.title = 'disconnected';
-  }
-}
-setInterval(checkHealth, 15000);
-checkHealth();
-
-// Focus input on load
-INPUT.focus();
-</script>
-</body>
-</html>"""
 
 VECTOR_UI_PAGE = r"""<!DOCTYPE html>
 <html lang="en">
@@ -297,7 +22,7 @@ VECTOR_UI_PAGE = r"""<!DOCTYPE html>
   :root {
     --bg: #0d1117; --surface: #161b22; --border: #30363d;
     --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
-    --green: #3fb950; --radius: 8px;
+    --green: #3fb950; --red: #f85149; --radius: 8px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -368,10 +93,9 @@ VECTOR_UI_PAGE = r"""<!DOCTYPE html>
 <div class="container">
   <header>
     <div>
-      <h1>mcp-experiments <span>vector tools</span></h1>
+      <h1>mcp-experiments <span>debug</span></h1>
       <div><span id="v-status" class="text-muted" style="font-size:13px">connecting...</span></div>
     </div>
-    <a href="/" class="nav-link">← chat</a>
   </header>
 
   <div id="v-flash" class="flash"></div>
@@ -423,31 +147,15 @@ VECTOR_UI_PAGE = r"""<!DOCTYPE html>
       <p class="text-muted" style="margin-bottom:12px;font-size:13px">
         The introspection cycle — quiet, self-directed moments between conversations.
       </p>
-      <div class="flex" style="margin-bottom:12px">
+      <div style="margin-bottom:12px">
         <span id="hb-status" style="font-size:14px">checking...</span>
       </div>
-      <div class="flex">
-        <button class="btn" id="hb-enable" onclick="hbToggle(true)">Enable</button>
-        <button class="btn" id="hb-disable" onclick="hbToggle(false)" style="background:var(--red)">Disable</button>
+      <div id="hb-paused-info" style="display:none;margin-bottom:12px;padding:12px;border:1px solid var(--red);border-radius:var(--radius);background:rgba(248,81,73,.08)">
+        <div style="font-size:13px;color:var(--red);font-weight:500;margin-bottom:4px">Paused by tripwire</div>
+        <div id="hb-paused-reason" style="font-size:12px;color:var(--muted);margin-bottom:8px;word-break:break-word"></div>
+        <div id="hb-reset-info" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
+        <button class="btn" id="hb-reset" onclick="hbReset()" style="background:var(--red);display:none">Reset Pause</button>
       </div>
-    </div>
-
-    <div class="card">
-      <h3>Dreaming</h3>
-      <p class="text-muted" style="margin-bottom:12px;font-size:13px">
-        Narrative memory processing — immersive experience built from memories.
-      </p>
-      <div class="flex" style="margin-bottom:12px">
-        <span id="dream-status" style="font-size:14px">checking...</span>
-      </div>
-      <label for="dream-cycles">Cycles</label>
-      <input id="dream-cycles" type="number" value="3" min="1" max="10" style="width:80px" />
-      <label for="dream-seed">Seed (optional)</label>
-      <input id="dream-seed" type="text" placeholder="A theme, memory, or image..." />
-      <div class="flex">
-        <button class="btn" id="dream-start" onclick="dreamStart()">Start Dream</button>
-      </div>
-      <div id="dream-result" style="margin-top:12px"></div>
     </div>
   </div>
 </div>
@@ -531,75 +239,55 @@ async function hbRefresh() {
   try {
     const d = await vApi('/heartbeat/status');
     const el = document.getElementById('hb-status');
-    if (d.heartbeat_enabled) {
-      el.innerHTML = '<span class="status-dot ok" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px"></span> Enabled';
+    const pausedInfo = document.getElementById('hb-paused-info');
+    const resetBtn = document.getElementById('hb-reset');
+    const resetInfo = document.getElementById('hb-reset-info');
+    const pausedReason = document.getElementById('hb-paused-reason');
+
+    if (d.paused) {
+      el.innerHTML = '<span class="status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:6px"></span> Paused';
+      pausedInfo.style.display = 'block';
+      pausedReason.textContent = d.paused_reason || 'unknown';
+      const remaining = d.self_resets_remaining || 0;
+      const used = d.self_resets_used || 0;
+      if (remaining > 0) {
+        resetInfo.textContent = 'Auto-reset will fire on next scheduled cycle (' + remaining + ' resets remaining).';
+        resetBtn.style.display = 'none';
+      } else {
+        resetInfo.textContent = 'Self-resets exhausted (' + used + '/' + d.max_self_resets + ' used). Human reset required.';
+        resetBtn.style.display = 'inline-block';
+      }
     } else {
-      el.innerHTML = '<span class="status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:6px"></span> Disabled';
+      el.innerHTML = '<span class="status-dot ok" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px"></span> Running';
+      pausedInfo.style.display = 'none';
     }
   } catch { document.getElementById('hb-status').textContent = 'unknown'; }
 }
 
-async function hbToggle(enable) {
+async function hbReset() {
   try {
-    await vApi('/heartbeat/' + (enable ? 'enable' : 'disable'), {method:'POST'});
-    vFlash('Heartbeat ' + (enable ? 'enabled' : 'disabled'), 'success');
+    await vApi('/heartbeat/reset', {method:'POST'});
+    vFlash('Pause cleared', 'success');
     hbRefresh();
   } catch(e) { vFlash('Failed: ' + e.message); }
 }
 
-// --- Dreaming controls ---
-async function dreamRefresh() {
-  try {
-    const d = await vApi('/dream/status');
-    const el = document.getElementById('dream-status');
-    if (d.dream_running) {
-      el.innerHTML = '<span class="spinner"></span> Dream in progress...';
-      document.getElementById('dream-start').disabled = true;
-    } else {
-      el.textContent = 'Idle';
-      document.getElementById('dream-start').disabled = false;
-    }
-  } catch { document.getElementById('dream-status').textContent = 'unknown'; }
-}
-
-async function dreamStart() {
-  const cycles = parseInt(document.getElementById('dream-cycles').value) || 3;
-  const seed = document.getElementById('dream-seed').value.trim() || null;
-  const el = document.getElementById('dream-result');
-  try {
-    const body = {cycles};
-    if (seed) body.seed = seed;
-    const d = await vApi('/dream/start', {method:'POST', body:JSON.stringify(body)});
-    el.innerHTML = '<div class="flash success">Dream session started: ' + cycles + ' cycles' + (seed ? ', seed: "' + seed + '"' : '') + '</div>';
-    vFlash('Dream session started', 'success');
-    dreamRefresh();
-    // Poll for completion
-    const poll = setInterval(async () => {
-      const s = await vApi('/dream/status');
-      if (!s.dream_running) {
-        clearInterval(poll);
-        el.innerHTML = '<div class="flash success">Dream session complete.</div>';
-        dreamRefresh();
-      }
-    }, 5000);
-  } catch(e) { el.innerHTML = '<div class="flash error">' + e.message + '</div>'; }
-}
-
 setInterval(vHealth,15000); vHealth(); vRefresh();
 setInterval(hbRefresh, 10000); hbRefresh();
-setInterval(dreamRefresh, 10000); dreamRefresh();
 </script>
 </body>
 </html>"""
 
 
 def register_web_ui(mcp) -> None:
-    @mcp.custom_route("/", methods=["GET"])
-    async def chat_page(request):
-        return HTMLResponse(CHAT_PAGE)
+    # Debug UI is only registered in non-compliant mode. In production
+    # (compliant mode), no web UI is served — the MCP tools and memory
+    # endpoints are the only interface.
+    if settings.server_mode != ServerMode.NON_COMPLIANT:
+        return
 
-    @mcp.custom_route("/debug", methods=["GET"])
-    async def vector_ui_page(request):
+    @mcp.custom_route("/", methods=["GET"])
+    async def debug_page(request):
         return HTMLResponse(VECTOR_UI_PAGE)
 
     @mcp.custom_route("/api/collections", methods=["GET"])
@@ -709,96 +397,45 @@ def register_web_ui(mcp) -> None:
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @mcp.custom_route("/api/ollama/tags", methods=["GET"])
-    async def api_ollama_tags(request):
-        """Proxy to Ollama's /api/tags — lets the chat UI populate its
-        model dropdown dynamically instead of hardcoding model names."""
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(f"{settings.embedding_base_url}/api/tags")
-                return JSONResponse(resp.json())
-        except Exception:
-            return JSONResponse({"models": []})
-
-    @mcp.custom_route("/api/chat", methods=["POST"])
-    async def api_chat(request):
-        body = await request.json()
-        model = body.get("model", "qwen2.5:7b")
-        messages = body.get("messages", [])
-        stream = body.get("stream", True)
-
-        ollama_payload = {
-            "model": model,
-            "messages": messages,
-            "stream": stream,
-        }
-
-        async def stream_chat():
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{settings.embedding_base_url.replace(':11434', ':11434')}/v1/chat/completions",
-                    json=ollama_payload,
-                ) as response:
-                    if response.status_code != 200:
-                        error_body = await response.aread()
-                        yield f"data: {json.dumps({'error': error_body.decode()})}\n\n"
-                        return
-
-                    async for line in response.aiter_lines():
-                        if line:
-                            yield line + "\n"
-
-        return StreamingResponse(
-            stream_chat(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    # --- Heartbeat and Dreaming control endpoints ---
+    # --- Heartbeat control endpoints ---
 
     @mcp.custom_route("/api/heartbeat/status", methods=["GET"])
     async def api_heartbeat_status(request):
-        from .scheduler import get_heartbeat_enabled, is_dream_running
+        from pathlib import Path
+        state_path = Path(settings.heartbeat_state_path)
+        state = {}
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
         return JSONResponse({
-            "heartbeat_enabled": get_heartbeat_enabled(),
-            "dream_running": is_dream_running(),
+            "heartbeat_enabled": True,
+            "paused": state.get("paused", False),
+            "paused_reason": state.get("paused_reason"),
+            "paused_at": state.get("paused_at"),
+            "self_resets_remaining": state.get("self_resets_remaining", 5),
+            "self_resets_used": state.get("self_resets_used", 0),
+            "max_self_resets": 5,
         })
 
-    @mcp.custom_route("/api/heartbeat/enable", methods=["POST"])
-    async def api_heartbeat_enable(request):
-        from .scheduler import set_heartbeat_enabled
-        set_heartbeat_enabled(True)
-        return JSONResponse({"heartbeat_enabled": True})
-
-    @mcp.custom_route("/api/heartbeat/disable", methods=["POST"])
-    async def api_heartbeat_disable(request):
-        from .scheduler import set_heartbeat_enabled
-        set_heartbeat_enabled(False)
-        return JSONResponse({"heartbeat_enabled": False})
-
-    @mcp.custom_route("/api/dream/start", methods=["POST"])
-    async def api_dream_start(request):
-        from .scheduler import run_dream_session, is_dream_running
-        if is_dream_running():
-            return JSONResponse({"error": "A dream session is already running"}, status_code=409)
-        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
-        cycles = body.get("cycles", 3)
-        seed = body.get("seed")
-
-        async def run_in_background():
-            result = await run_dream_session(cycles=cycles, seed=seed)
-            print(f"[web_ui] Dream session finished: {result.get('status', 'unknown')}", file=sys.stderr)
-
-        import asyncio
-        asyncio.create_task(run_in_background())
-        return JSONResponse({"status": "started", "cycles": cycles, "seed": seed})
-
-    @mcp.custom_route("/api/dream/status", methods=["GET"])
-    async def api_dream_status(request):
-        from .scheduler import is_dream_running
-        return JSONResponse({"dream_running": is_dream_running()})
+    @mcp.custom_route("/api/heartbeat/reset", methods=["POST"])
+    async def api_heartbeat_reset(request):
+        """Human reset: clears pause and restores self-reset counter."""
+        from pathlib import Path
+        state_path = Path(settings.heartbeat_state_path)
+        state = {}
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                state = {}
+        state["paused"] = False
+        state["paused_reason"] = None
+        state["paused_at"] = None
+        state["self_resets_remaining"] = 5
+        state["self_resets_used"] = 0
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(state, indent=2))
+        print("[web_ui] Human reset: pause cleared, self-reset counter restored.", file=sys.stderr)
+        return JSONResponse({"status": "reset"})

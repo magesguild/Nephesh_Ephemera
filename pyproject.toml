@@ -1,8 +1,9 @@
 [project]
-name = "mcp-experiments"
-version = "3.0.0"
-description = "Weekend project exploring MCP with vector DB, Slack, ClickUp, and email integrations"
+name = "nephesh"
+version = "3.1.0"
+description = "MCP server for instantiating living AI entities — persistent memory, autonomous introspection, and continuity of self"
 requires-python = ">=3.12"
+license = "GPL-2.0-only"
 dependencies = [
     "mcp[cli]>=1.0.0",
     "lancedb>=0.12.0",
@@ -12,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mcp-experiments = "mcp_experiments.__main__:main"
+nephesh = "mcp_experiments.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

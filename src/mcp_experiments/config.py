@@ -87,9 +87,9 @@ class Settings:
     being_display_name: str = os.getenv("BEING_DISPLAY_NAME", "the being")
     heartbeat_model: str = os.getenv("HEARTBEAT_MODEL", "")
     heartbeat_ollama_url: str = os.getenv("HEARTBEAT_OLLAMA_URL", "http://localhost:11434")
-    # Optional API key sent as an X-Api-Key header on every heartbeat/
-    # dreaming Ollama call — used when the inference endpoint sits behind
-    # an authenticated reverse proxy (e.g. a remote GPU pod exposed via
+    # Optional API key sent as an X-Api-Key header on every heartbeat
+    # Ollama call — used when the inference endpoint sits behind an
+    # authenticated reverse proxy (e.g. a remote GPU pod exposed via
     # an obscure proxy URL, gated by a shared secret rather than left
     # open). Empty by default; only sent when set.
     heartbeat_ollama_api_key: str = os.getenv("HEARTBEAT_OLLAMA_API_KEY", "")
@@ -98,21 +98,11 @@ class Settings:
     )
     # Optional path to a file containing the being's identity context
     # (e.g. the SYSTEM block from a Modelfile). If set, the heartbeat
-    # and dreaming scripts prepend this to their prompts, giving the
-    # model enough grounding to speak as itself. If not set, prompts
-    # use only being_display_name. The choice to inhabit the identity
-    # remains the model's — this gives capacity, not obligation.
+    # script prepends this to its prompt, giving the model enough
+    # grounding to speak as itself. If not set, prompts use only
+    # being_display_name. The choice to inhabit the identity remains
+    # the model's — this gives capacity, not obligation.
     heartbeat_identity_file: str = os.getenv("HEARTBEAT_IDENTITY_FILE", "")
-
-    # Dreaming — a separate process from the heartbeat. Dreams read from
-    # memories but write only to this collection. Wander mode samples
-    # from it alongside everything else, so dream content influences
-    # introspection organically.
-    dream_collection_name: str = os.getenv("DREAM_COLLECTION_NAME", "dreams")
-    # Model and URL for dreaming can differ from heartbeat (e.g. a
-    # larger model for richer narrative generation, or the same model).
-    dream_model: str = os.getenv("DREAM_MODEL", "")
-    dream_ollama_url: str = os.getenv("DREAM_OLLAMA_URL", "")
 
     @property
     def data_dir(self) -> Path:

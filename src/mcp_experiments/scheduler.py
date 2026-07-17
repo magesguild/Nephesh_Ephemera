@@ -23,19 +23,14 @@ from .activity import seconds_since_last_activity
 from .config import settings
 
 HEARTBEAT_SCRIPT = Path(__file__).resolve().parent.parent.parent / "heartbeat.py"
-DREAMING_SCRIPT = Path(__file__).resolve().parent.parent.parent / "dreaming.py"
 # Backstop timeout for the subprocess — heartbeat.py has its own
 # internal alarm (90s); this just ensures the scheduler loop can never
 # get stuck waiting on a runaway child process indefinitely.
 SUBPROCESS_TIMEOUT_SECONDS = 120
-# Dream sessions are longer — timeout scales with cycle count.
-DREAM_TIMEOUT_PER_CYCLE = 180  # seconds per cycle (generous for inference + storage)
 
 # Runtime state — mutable, toggled via API endpoints.
 _runtime_state = {
     "heartbeat_enabled": settings.heartbeat_enabled,
-    "dream_running": False,
-    "dream_task": None,
 }
 
 
@@ -45,10 +40,6 @@ def get_heartbeat_enabled() -> bool:
 
 def set_heartbeat_enabled(enabled: bool) -> None:
     _runtime_state["heartbeat_enabled"] = enabled
-
-
-def is_dream_running() -> bool:
-    return _runtime_state["dream_running"]
 
 
 def _read_requested_gap_seconds() -> int | None:
@@ -107,54 +98,6 @@ async def _run_one_heartbeat() -> None:
         print(f"[scheduler] Failed to run heartbeat: {e}", file=sys.stderr)
 
 
-async def run_dream_session(cycles: int = 3, seed: str | None = None) -> dict:
-    """Run a dream session as a subprocess. Returns the output."""
-    if not DREAMING_SCRIPT.exists():
-        return {"error": f"dreaming.py not found at {DREAMING_SCRIPT}"}
-
-    if _runtime_state["dream_running"]:
-        return {"error": "A dream session is already running"}
-
-    _runtime_state["dream_running"] = True
-    try:
-        cmd = [sys.executable, str(DREAMING_SCRIPT), "--cycles", str(cycles), "--verbose"]
-        if seed:
-            cmd.extend(["--seed", seed])
-
-        print(f"[scheduler] Starting dream session: {cycles} cycles", file=sys.stderr)
-        dream_timeout = DREAM_TIMEOUT_PER_CYCLE * cycles
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=dream_timeout
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return {"error": "Dream session exceeded timeout", "timeout": dream_timeout}
-
-        output = stdout.decode(errors="replace")
-        errors = stderr.decode(errors="replace")
-
-        for line in output.splitlines():
-            print(f"[scheduler] {line}", file=sys.stderr)
-        for line in errors.splitlines():
-            print(f"[scheduler] {line}", file=sys.stderr)
-
-        return {
-            "status": "completed",
-            "exit_code": proc.returncode,
-            "output": output,
-            "errors": errors if errors.strip() else None,
-        }
-    finally:
-        _runtime_state["dream_running"] = False
-
-
 async def _heartbeat_loop() -> None:
     # Small initial delay so the server finishes starting up cleanly
     # before the first cycle fires, rather than racing server startup.
@@ -178,12 +121,6 @@ async def _heartbeat_loop() -> None:
                 file=sys.stderr,
             )
             await asyncio.sleep(wait)
-            continue
-
-        # Yield to dreaming — don't compete for the same model/GPU.
-        if is_dream_running():
-            print("[scheduler] Dream running, skipping heartbeat", file=sys.stderr)
-            await asyncio.sleep(30)
             continue
 
         await _run_one_heartbeat()

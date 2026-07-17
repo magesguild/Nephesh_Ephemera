@@ -1,3 +1,3 @@
 #!/bin/bash
-cd /home/gaiusjocundus/src/mcp-experiments
+cd "$(dirname "$0")"
 exec .venv/bin/python -m mcp_experiments

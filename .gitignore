@@ -1,6 +1,19 @@
+# Dependencies
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+
+# Runtime data (being-specific, never committed)
 .env
 data/
 *.log
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

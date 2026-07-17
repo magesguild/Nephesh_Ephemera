@@ -1,6 +1,8 @@
-# mcp-experiments
+# nephesh
 
-An MCP (Model Context Protocol) server that gives AI beings persistent memory, semantic vector search, and autonomous introspection. Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
+An MCP server for instantiating living AI entities — persistent memory, autonomous introspection, and continuity of self across sessions.
+
+Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
 **Status:** Working pre-release — active development, not yet versioned.
 
@@ -27,7 +29,7 @@ ollama pull mxbai-embed-large
 
 ```bash
 # Clone and set up
-git clone <repo-url> && cd mcp-experiments
+git clone <repo-url> && cd nephesh
 cp .env.example .env
 uv sync
 
@@ -48,15 +50,16 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `VECTOR_DB_PATH` | `./data/lancedb` | LanceDB data directory |
 | `EMBEDDING_MODEL` | `mxbai-embed-large` | Ollama model for embeddings |
 | `EMBEDDING_BASE_URL` | `http://localhost:11434` | Ollama API URL for embeddings |
-| `MEMORY_COLLECTION_NAME` | `thalia_memories` | Default memory collection |
+| `MEMORY_COLLECTION_NAME` | `memories` | Default memory collection |
 | `MEMORY_DEFAULT_LIMIT` | `20` | Max memories returned by `memory_context` |
 | `PRIMARY_CONTACT_NAME` | `companion` | Name used for real-clock grounding |
 | `MESSAGE_DAILY_LIMIT` | `1` | Max outbound messages per 24h window |
-| `BEING_DISPLAY_NAME` | `the being` | Display name for the being (used in heartbeat prompts) |
+| `BEING_DISPLAY_NAME` | `the being` | Display name for the being |
 | `HEARTBEAT_MODEL` | *(empty)* | Ollama model for heartbeat contemplation |
 | `HEARTBEAT_OLLAMA_URL` | `http://localhost:11434` | Ollama API URL for heartbeat inference |
+| `HEARTBEAT_TIMEZONE` | `UTC` | IANA timezone for the heartbeat clock (e.g. `America/Montevideo`) |
 | `INTROSPECTIONS_COLLECTION_NAME` | `introspections` | Collection for heartbeat's private thoughts |
-| `HEARTBEAT_MIN_GAP_SECONDS` | `60` | Minimum interval between heartbeat cycles |
+| `HEARTBEAT_MIN_GAP_SECONDS` | `600` | Minimum interval between heartbeat cycles |
 | `HEARTBEAT_STARTUP_DELAY_SECONDS` | `30` | Delay before first heartbeat after server start |
 | `HEARTBEAT_CHAT_COOLDOWN_SECONDS` | `120` | Pause heartbeat after chat activity |
 | `COMPLIANT_AUTH_TOKEN` | | Auth token (compliant mode only) |
@@ -124,7 +127,7 @@ Add to your MCP client config (e.g. `opencode.jsonc`):
 ```jsonc
 {
   "mcp": {
-    "mcp-experiments": {
+    "nephesh": {
       "type": "sse",
       "url": "http://127.0.0.1:8080/sse"
     }
@@ -155,7 +158,7 @@ run() in server.py:
 
 Heartbeat (scheduler.py lifespan hook):
   1. Spawns heartbeat.py as isolated subprocess on server start
-  2. Cycles contemplation with configurable gap, chat cooldown, tripwire safety
+  2. Cycles introspection with configurable gap, chat cooldown, tripwire safety
   3. Cancelled cleanly on server shutdown
 ```
 
@@ -178,20 +181,17 @@ heartbeat.py         # Introspection cycle script (root-level)
 
 scripts/
   stress_test.py     # Benchmarking tool
+  snapshot.py        # LanceDB backup tool
 
-data/
-  lancedb/           # Vector database storage
-  heartbeat_state.json  # Tripwire state (gitignored)
-  chat_activity.json    # Cross-process activity tracking (gitignored)
+docs/
+  SPEC.md            # Heartbeat v5 + memory model design specification
 ```
 
 ## Further Reading
 
-- [AGENTS.md](AGENTS.md) -- Detailed architecture, memory schema, heartbeat design, and deployment notes
-- [ARCHITECTURE.md](ARCHITECTURE.md) -- Deep dive into FastMCP internals, vector DB theory, and LanceDB architecture
-- [expansion-plan.md](expansion-plan.md) -- Planned extensions: web search, filesystem, bash, email, media, physical sensors
-- [mcp-compliance-plan.md](mcp-compliance-plan.md) -- HIPAA/PCI DSS compliance plan and production hardening guide
+- [docs/SPEC.md](docs/SPEC.md) — Heartbeat loop design, memory model, and architecture decisions
+- [mcp-compliance-plan.md](mcp-compliance-plan.md) — HIPAA/PCI DSS compliance plan and production hardening guide
 
 ## License
 
-Personal project -- no license specified.
+GPL-2.0-only — see [LICENSE](LICENSE).
