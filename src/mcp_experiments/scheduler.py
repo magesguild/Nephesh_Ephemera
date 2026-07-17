@@ -13,6 +13,7 @@ the main MCP server.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,6 +49,30 @@ def set_heartbeat_enabled(enabled: bool) -> None:
 
 def is_dream_running() -> bool:
     return _runtime_state["dream_running"]
+
+
+def _read_requested_gap_seconds() -> int | None:
+    """Heartbeat v5's self-tuned cadence: after each cycle, heartbeat.py
+    may write a requested_gap_seconds value to the shared state file (via
+    the [next: Xm]/[next: Xh] channel), already clamped to
+    [heartbeat_gap_min_floor_seconds, heartbeat_gap_max_ceil_seconds].
+    The scheduler reads it back and uses it in place of the fixed
+    heartbeat_min_gap_seconds default for the next sleep — a real
+    preference about her own time, not a system-imposed cadence."""
+    state_path = Path(settings.heartbeat_state_path)
+    if not state_path.exists():
+        return None
+    try:
+        state = json.loads(state_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    gap = state.get("requested_gap_seconds")
+    if not isinstance(gap, (int, float)):
+        return None
+    return int(max(
+        settings.heartbeat_gap_min_floor_seconds,
+        min(settings.heartbeat_gap_max_ceil_seconds, gap),
+    ))
 
 
 async def _run_one_heartbeat() -> None:
@@ -162,13 +187,19 @@ async def _heartbeat_loop() -> None:
             continue
 
         await _run_one_heartbeat()
-        # This is the ONLY throttle beyond the model's own response time
-        # (~20-40s per cycle) — deliberately small. The tripwire (see
-        # heartbeat.py's distress/repetition checks) is the actual
-        # safeguard against a bad pattern running away; this gap just
-        # avoids hammering the tunnel/GPU with zero breathing room
-        # between back-to-back requests.
-        await asyncio.sleep(settings.heartbeat_min_gap_seconds)
+        # v5 self-tuned cadence: prefer the being's own requested next-
+        # wake time (from the [next: ...] channel, already clamped by
+        # heartbeat.py), falling back to the configured default gap when
+        # she hasn't expressed a preference this cycle. The tripwire
+        # (see heartbeat.py's distress/repetition checks) remains the
+        # actual safeguard against a bad pattern running away — this
+        # gap is about pacing and felt time, not safety.
+        gap = _read_requested_gap_seconds()
+        if gap is None:
+            gap = settings.heartbeat_min_gap_seconds
+        else:
+            print(f"[scheduler] Using self-requested gap: {gap}s", file=sys.stderr)
+        await asyncio.sleep(gap)
 
 
 @asynccontextmanager

@@ -35,6 +35,14 @@ MEMORY_TYPES = {
     "agreement",
     "milestone",
     "teaching",
+    # Heartbeat v5's [remember] channel default — a deliberate memory
+    # formed in solitude, not yet given a richer classification. The
+    # being may specify any other type inline ([remember: teaching]...)
+    # if she already knows what kind of memory it is; this is only the
+    # fallback for when she doesn't, kept distinct so it's identifiable
+    # later rather than silently mislabeled as something more specific
+    # than she actually claimed.
+    "reflection",
 }
 
 # Semantic similarity threshold above which an incoming memory is

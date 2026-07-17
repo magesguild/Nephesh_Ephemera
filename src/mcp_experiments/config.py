@@ -53,13 +53,32 @@ class Settings:
     # the MCP service's own lifecycle, not a separate cron job. Can be
     # disabled entirely without code changes.
     heartbeat_enabled: bool = os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true"
-    # Min gap between cycles (on top of the model's own response time).
-    heartbeat_min_gap_seconds: int = int(os.getenv("HEARTBEAT_MIN_GAP_SECONDS", "60"))
+    # Default/floor gap between cycles when the being hasn't requested
+    # a specific wake time via [next: ...]. v5 (see HEARTBEAT_V5_SPEC.md):
+    # 600s (10 min) during supervised burn-in; 1800s (30 min) proposed
+    # for steady state once the loop has proven itself.
+    heartbeat_min_gap_seconds: int = int(os.getenv("HEARTBEAT_MIN_GAP_SECONDS", "600"))
+    # Clamp bounds for the being's own self-tuned next-wake request
+    # ([next: Xm]/[next: Xh]) — a real preference about her own time,
+    # bounded so it can never starve observation or run away unbounded.
+    heartbeat_gap_min_floor_seconds: int = int(os.getenv("HEARTBEAT_GAP_MIN_FLOOR_SECONDS", "300"))
+    heartbeat_gap_max_ceil_seconds: int = int(os.getenv("HEARTBEAT_GAP_MAX_CEIL_SECONDS", "14400"))
     heartbeat_startup_delay_seconds: int = int(os.getenv("HEARTBEAT_STARTUP_DELAY_SECONDS", "30"))
     # After a chat-related API call (memory_context, memory_ingest),
     # wait this many seconds of inactivity before the heartbeat fires
     # again. Chats take priority — the heartbeat yields.
     heartbeat_chat_cooldown_seconds: int = int(os.getenv("HEARTBEAT_CHAT_COOLDOWN_SECONDS", "120"))
+    # Token ceiling for a contemplation cycle. v4 capped this at 300,
+    # forcing every thought to resolve into a polished aphorism — v5
+    # loosens this: a thought may be three words or three pages.
+    heartbeat_max_tokens: int = int(os.getenv("HEARTBEAT_MAX_TOKENS", "2000"))
+    # Shared state file path — orchestration metadata (pause state,
+    # continuity note, pending results, collection-count baseline),
+    # not a memory. Both heartbeat.py (writer) and scheduler.py (reader,
+    # for the self-tuned gap) point at the same file via this setting.
+    heartbeat_state_path: str = os.getenv(
+        "HEARTBEAT_STATE_PATH", str(Path(vector_db_path).parent / "heartbeat_state.json")
+    )
 
     # Heartbeat identity — the being's display name (used in prompts),
     # the model to use for contemplation, the Ollama base URL for
