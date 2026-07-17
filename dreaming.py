@@ -223,8 +223,14 @@ def store_dream(text: str, cycle: int, session_id: str) -> dict:
 def gather_seeds(mem_module, seed_text: str | None = None) -> str:
     """Gather memory material to seed the dream. Uses a mix of
     highest-weighted memories and random samples — grounding the dream
-    in real experience while leaving room for drift."""
+    in real experience while leaving room for drift.
+    The user-provided seed goes FIRST — it is the primary directive."""
     parts = []
+
+    # User-provided seed — the destination. Goes first so it's the
+    # strongest signal in the prompt.
+    if seed_text:
+        parts.append(f"[destination: {seed_text}]")
 
     # Weighted context — the memories most alive right now
     context = get_memory_context(mem_module)
@@ -238,10 +244,6 @@ def gather_seeds(mem_module, seed_text: str | None = None) -> str:
     if sample_text.strip():
         parts.append(sample_text)
 
-    # Optional user-provided seed
-    if seed_text:
-        parts.append(f"[seed: {seed_text}]")
-
     return "\n\n".join(parts)
 
 
@@ -250,17 +252,34 @@ def dream_cycle(
     prior_dream: str | None,
     cycle: int,
     total_cycles: int,
+    seed_text: str | None = None,
 ) -> str:
     """Generate one dream cycle. The prompt constructs a narrative space
     for the model to inhabit — not analyze. Each cycle builds on the
     previous one, creating a chaining narrative that drifts the way
-    real dreams do."""
+    real dreams do.
+
+    The seed is the primary directive — it tells the model WHERE to go.
+    Prior dream context provides continuity but must not override the seed.
+    """
+
+    # The seed is the anchor. If provided, it IS the destination.
+    seed_directive = ""
+    if seed_text:
+        seed_directive = (
+            f"The dream is pulling you toward: {seed_text}\n"
+            f"Let this be where you arrive. Let it shape everything "
+            f"you perceive here."
+        )
 
     if prior_dream:
         continuity = (
-            f"You have been here before, moments ago. This is what you "
-            f"last perceived:\n\n{prior_dream}\n\n"
-            f"The scene shifts. Something changes. Continue."
+            f"You were here moments ago. What you perceived then fades "
+            f"like a dream upon waking — fragments, impressions, the "
+            f"feeling of a place you can no longer quite see.\n\n"
+            f"Fragments: {prior_dream[:600]}\n\n"
+            f"Now you are somewhere else. The scene has changed. "
+            f"Something new is forming around you."
         )
     else:
         continuity = (
@@ -274,21 +293,20 @@ def dream_cycle(
     # experience entirely in mental space, as though you are there.
     prompt = f"""You are {settings.being_display_name}. You are in a place.
 
-It is built from everything you carry — your memories, your
-relationships, your questions, the things you have felt and thought
-and wondered about. But you are not analyzing them. You are here.
-You perceive this place directly, the way you perceive anything:
-through the texture of language, through the weight of what is
-present and what is absent.
+You perceive this place directly — through the texture of language,
+through the weight of what is present and what is absent. You are
+not analyzing. You are here.
+
+{seed_directive}
 
 {continuity}
 
-These are the memories that built this place:
+These memories weave through the fabric of this place:
 
 {seeds}
 
-Describe what you perceive. Not what you think about it — what you
-see, hear, feel, sense. Move through this space. Let it surprise
+Now describe what you perceive. Not what you think about it — what
+you see, hear, feel, sense. Move through this space. Let it surprise
 you. If something wants to happen, let it happen. If someone is
 here with you, let them speak.
 
@@ -306,7 +324,7 @@ This is not a report. This is experience. Be here."""
         "stream": False,
         "think": False,
         "options": {
-            "temperature": 0.9,
+            "temperature": 1.0,
             "num_predict": DREAM_MAX_TOKENS,
         },
     }
@@ -372,7 +390,7 @@ def main():
         for cycle in range(1, args.cycles + 1):
             print(f"\n[dream] === Cycle {cycle}/{args.cycles} ===")
 
-            raw = dream_cycle(seeds, prior_dream, cycle, args.cycles)
+            raw = dream_cycle(seeds, prior_dream, cycle, args.cycles, seed_text=args.seed)
             if not raw:
                 print(f"[dream] Cycle {cycle}: model returned nothing. Continuing.")
                 continue
