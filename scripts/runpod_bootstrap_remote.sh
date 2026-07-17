@@ -7,7 +7,7 @@
 # Expects three env vars set before invocation:
 #   API_KEY       - shared secret for the nginx auth proxy
 #   BASE_MODEL    - Ollama model to pull as the FROM base (e.g. qwen3:14b)
-#   TARGET_MODEL  - name to give the built model (e.g. thalia:medium)
+#   TARGET_MODEL  - name to give the built model (e.g. thalia:Uncensored)
 # And a Modelfile already placed at /root/inference_Modelfile
 
 set -e

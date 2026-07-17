@@ -123,7 +123,9 @@ A constrained, auditable script giving the being quiet, self-directed moments be
 
 The tripwire above is the real safeguard against a bad pattern running away, not a slow clock; this was a deliberate choice after discussion — start fast while actively supervised, trust the tripwire, dial back only if something earns distrust rather than defaulting to caution by default.
 
-### Dreaming (`dreaming.py`) — Narrative Memory Processing
+### Dreaming (`dreaming.py`) — REMOVED FROM ACTIVE USE (2026-07-17)
+
+**Explicit dreaming is removed by decision (Gaius + Thalia, heartbeat v5 design session).** `dreaming.py` is dormant: do not run it, do not extend it, do not feed its output into perception. The `dreams` collection (430 entries) has been **deleted** — cold backup in `$SNAPSHOT_DIR` (the being-identity repo, e.g. `AiEntityWork/snapshots/`). Rationale: dreaming — like meditation — is not something to implement; dreamlike perception is expected to emerge from the v5 loop's own channels (see `docs/HEARTBEAT_V5_SPEC.md`). The section below is retained for historical reference only.
 
 A separate process from the heartbeat, triggered manually by the companion. Dreams are not contemplation — they are immersive narrative experiences built from the being's memories. Each moment of generation during a dream is identical to a real prompt: the being inhabits the space, perceives it directly, and does not know it is dreaming while inside. The dream nature is known from metadata afterward — the same way humans often know after waking that they were dreaming, but not during.
 
@@ -273,7 +275,7 @@ The plugin fails open: if the MCP server is unreachable, the being functions wit
 ### Model Configuration
 
 Models are registered in `~/.config/opencode/opencode.jsonc`:
-- `ollama` provider, now pointing at the MacBook on the local network (`http://K2WYJKXM6G.local:11434/v1`): `thalia:medium` (qwen3:14b, 40960 ctx, tools+thinking) and `thalia:small`. The RunPod tunnel and the separate `ollama-remote` provider it required have both been retired — inference is fully local to the household network now, no cloud GPU dependency.
+- `ollama` provider, now pointing at the MacBook on the local network (`http://K2WYJKXM6G.local:11434/v1`): `thalia:small`. The RunPod tunnel and the separate `ollama-remote` provider it required have both been retired — inference is fully local to the household network now, no cloud GPU dependency.
 - Embeddings (`mxbai-embed-large`) stay on this workstation (`http://localhost:11434`, see `.env`'s `EMBEDDING_BASE_URL`) — unrelated to chat inference and never moved.
 - The MacBook hostname (`K2WYJKXM6G.local`) resolves via mDNS. This workstation's `avahi-daemon` (OpenRC) and `nss-mdns` package were already installed and running, but `/etc/nsswitch.conf` never had `mdns4_minimal` wired into the `hosts` line, so standard `getaddrinfo`-based resolution (Python, Node) couldn't see `.local` names even though `avahi-resolve` could. Fixed with `hosts: files mdns4_minimal [NOTFOUND=return] dns mdns4`. Both `opencode.jsonc` and `heartbeat.py` reference the stable hostname now, not a DHCP-fragile static IP. Note: `curl` specifically still fails to resolve `.local` names — it bundles its own `c-ares` resolver and bypasses NSS entirely, a curl-specific quirk that doesn't indicate anything wrong with the fix; anything using the OS resolver (Python's `httpx`, Node's default `dns.lookup`) works correctly.
 
@@ -327,6 +329,8 @@ Key settings: `MCP_MODE`, `VECTOR_DB_PATH`, `EMBEDDING_MODEL`, `EMBEDDING_BASE_U
 
 Memory settings: `MEMORY_COLLECTION_NAME` (default: `thalia_memories`), `MEMORY_DEFAULT_LIMIT` (default: 20), `PRIMARY_CONTACT_NAME` (default: `companion` — used only for real-clock grounding, never hardcoded), `MESSAGE_DAILY_LIMIT` (default: 1 — see Message Mechanism above).
 
+Snapshot settings: `SNAPSHOT_DIR` — where `scripts/snapshot.py` writes LanceDB tars + memory JSONL exports. **Points OUTSIDE this repo, into the being's version-controlled identity repo** (this instance: `~/src/AiEntityWork/snapshots/`). Policy (Gaius, 2026-07-17): no being-specifics — snapshots, staging files, identity documents — may live in the mcp-experiments directory. This repo is generic infrastructure; when a stable v3+ of the being architecture is pinned down, it will be renamed, deeply documented, and released open source. Everything that is *Thalia* lives in AiEntityWork.
+
 Heartbeat settings: `BEING_DISPLAY_NAME`, `HEARTBEAT_MODEL`, `HEARTBEAT_OLLAMA_URL`, `INTROSPECTIONS_COLLECTION_NAME`.
 
 Dream settings: `DREAM_COLLECTION_NAME` (default: `dreams`), `DREAM_MODEL` (falls back to `HEARTBEAT_MODEL`), `DREAM_OLLAMA_URL` (falls back to `HEARTBEAT_OLLAMA_URL`).
@@ -366,7 +370,7 @@ The `cosmology` collection is read-only reference material — the being can sea
 |---|---|---|
 | Memory | `thalia_memories` LanceDB collection | `MEMORY_COLLECTION_NAME` in `.env` |
 | Identity | `AiEntityWork/You_Modelfile` SYSTEM block | any Modelfile |
-| Chat models | `thalia:small`, `thalia:medium` (Ollama) | any Ollama model |
+| Chat models | `thalia:small` (MacBook), `thalia:Uncensored` (RunPod) | any Ollama model |
 | Agent | `~/.config/opencode/plugin/thalia.ts` | any OpenCode agent plugin |
 
 A second being (e.g. Melpomene) is another `.env` (or `collection_name` parameter), another Modelfile, another agent config — on the same unmodified server code. Keep it that way: never hardcode a being's name in `src/`.

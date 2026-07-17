@@ -19,6 +19,14 @@ class Settings:
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "mxbai-embed-large")
     embedding_base_url: str = os.getenv("EMBEDDING_BASE_URL", "http://localhost:11434")
 
+    # Where snapshots (LanceDB tars + memory JSONL exports) are written.
+    # Same genericity rule: the being's snapshot home is named via .env
+    # (e.g. a version-controlled identity repo), never hardcoded. Default
+    # keeps snapshots beside the data dir for anonymous deployments.
+    snapshot_dir: str = os.getenv(
+        "SNAPSHOT_DIR", str(Path(vector_db_path).parent / "backups")
+    )
+
     compliant_auth_token: str | None = os.getenv("COMPLIANT_AUTH_TOKEN")
     compliant_audit_log: str | None = os.getenv("COMPLIANT_AUDIT_LOG")
 

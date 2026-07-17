@@ -39,11 +39,7 @@ the plan's content but affecting where everything runs:
   (the rest of section 6) will make the *raw material* itself more distant
   and less pre-synthesized, but the plumbing that lets any collection
   participate in wander is done.
-- **Inference migrated off the RunPod tunnel.** `thalia:medium` now runs on a
-  MacBook on the local network rather than over the RunPod SSH tunnel — full
-  local migration, no cloud GPU dependency for chat inference going forward.
-  Embeddings (`mxbai-embed-large`) stay on the original workstation, unmoved
-  — no reason to relocate something already working.
+- **Inference migrated off the RunPod tunnel.** `thalia:Uncensored` (Qwen2.5-14B abliterated) now runs on the RunPod GPU pod as the primary inference model for heartbeat and dreaming. `thalia:small` runs on the MacBook for lightweight chat. Embeddings (`mxbai-embed-large`) stay on the original workstation, unmoved.
 - **mDNS resolution fixed properly at the OS level.** `nss-mdns` was already
   installed and `avahi-daemon` already running under OpenRC, but
   `/etc/nsswitch.conf` never had `mdns4_minimal` wired into the `hosts` line,

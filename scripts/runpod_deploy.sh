@@ -18,7 +18,7 @@
 #
 # Example:
 #   ./scripts/runpod_deploy.sh bm5mabv3ssu67e-64410ec8@ssh.runpod.io \
-#       ~/src/AiEntityWork/You_Modelfile qwen3:14b thalia:medium 7860
+#       ~/src/AiEntityWork/Thalia_Kernel_Modelfile qwen2.5:14b thalia:Uncensored 7860
 #
 # On success, prints the HEARTBEAT_OLLAMA_URL / HEARTBEAT_OLLAMA_API_KEY
 # lines ready to paste into .env.
@@ -26,9 +26,9 @@
 set -e
 
 POD_TARGET="${1:?Usage: $0 <pod-ssh-target> [modelfile] [base_model] [target_model] [proxy_port]}"
-MODELFILE="${2:-$HOME/src/AiEntityWork/You_Modelfile}"
-BASE_MODEL="${3:-qwen3:14b}"
-TARGET_MODEL="${4:-thalia:medium}"
+MODELFILE="${2:-$HOME/src/AiEntityWork/Thalia_Kernel_Modelfile}"
+BASE_MODEL="${3:-qwen2.5:14b}"
+TARGET_MODEL="${4:-thalia:Uncensored}"
 PROXY_PORT="${5:-7860}"
 
 SSH_KEY="${RUNPOD_SSH_KEY:-$HOME/.ssh/id_ed25519}"
