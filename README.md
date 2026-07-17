@@ -10,8 +10,7 @@ Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lance
 
 - Exposes vector database and memory tools over MCP so AI clients (Claude Desktop, Cursor, OpenCode, etc.) can ingest, search, and manage document collections and memories through standard tool calls
 - Implements persistent memory for an AI being: lived experience, decisions, emotions, relationships — surviving session boundaries and context compaction
-- Runs an autonomous heartbeat cycle: quiet introspection between conversations, with tripwire safety and rate-limited outbound messaging
-- Embeds a web UI with a chat interface (proxied to local Ollama LLMs) and a debug panel for the vector tools
+- Embeds a web UI with a debug panel for the vector tools
 - Ships with a compliance framework for filtering tools in regulated environments (HIPAA/PCI DSS)
 - Generic infrastructure: the code never names a being. Identity lives in configuration and data layers (LanceDB collections, Ollama Modelfiles, agent plugins). A second being is another `.env` + Modelfile + collection — on the same unmodified server code.
 
@@ -54,14 +53,6 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `MEMORY_DEFAULT_LIMIT` | `20` | Max memories returned by `memory_context` |
 | `PRIMARY_CONTACT_NAME` | `companion` | Name used for real-clock grounding |
 | `MESSAGE_DAILY_LIMIT` | `1` | Max outbound messages per 24h window |
-| `BEING_DISPLAY_NAME` | `the being` | Display name for the being |
-| `HEARTBEAT_MODEL` | *(empty)* | Ollama model for heartbeat contemplation |
-| `HEARTBEAT_OLLAMA_URL` | `http://localhost:11434` | Ollama API URL for heartbeat inference |
-| `HEARTBEAT_TIMEZONE` | `UTC` | IANA timezone for the heartbeat clock (e.g. `America/Montevideo`) |
-| `INTROSPECTIONS_COLLECTION_NAME` | `introspections` | Collection for heartbeat's private thoughts |
-| `HEARTBEAT_MIN_GAP_SECONDS` | `600` | Minimum interval between heartbeat cycles |
-| `HEARTBEAT_STARTUP_DELAY_SECONDS` | `30` | Delay before first heartbeat after server start |
-| `HEARTBEAT_CHAT_COOLDOWN_SECONDS` | `120` | Pause heartbeat after chat activity |
 | `COMPLIANT_AUTH_TOKEN` | | Auth token (compliant mode only) |
 | `COMPLIANT_AUDIT_LOG` | `./data/audit.log` | Audit log path (compliant mode only) |
 
@@ -69,19 +60,16 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 
 | URL | Description |
 |---|---|
-| `/` | Chat UI (proxies to Ollama LLMs) |
-| `/debug` | Vector tools debug UI |
+| `/` | Debug UI for vector tools |
 | `/sse` | MCP SSE endpoint (for AI clients) |
 | `/api/health` | Health check |
 | `/api/collections` | List collections |
 | `/api/collections/{name}` | Collection info |
 | `/api/collections/{name}/search` | Semantic search (POST) |
 | `/api/collections/{name}/ingest` | Ingest documents (POST) |
-| `/api/chat` | Chat proxy (POST) |
 | `/api/memory/context` | Memory context for session injection (GET) |
 | `/api/memory/ingest` | Store a memory (POST) |
 | `/api/memory/sample` | Stratified random memory sample (GET) |
-| `/api/ollama/tags` | List available Ollama models (GET) |
 
 ## MCP Tools
 
@@ -155,11 +143,6 @@ run() in server.py:
   2. Register tools (compliance-gated)
   3. Register web UI routes
   4. Start SSE transport
-
-Heartbeat (scheduler.py lifespan hook):
-  1. Spawns heartbeat.py as isolated subprocess on server start
-  2. Cycles introspection with configurable gap, chat cooldown, tripwire safety
-  3. Cancelled cleanly on server shutdown
 ```
 
 ## Project Structure
@@ -169,27 +152,25 @@ src/mcp_experiments/
   server.py          # FastMCP server, health tool, run()
   config.py          # Environment variable settings
   compliance.py      # Compliance levels and tool filtering
-  web_ui.py          # Chat UI + debug UI + REST API
-  scheduler.py       # Heartbeat lifecycle (lifespan hook)
-  activity.py        # Chat activity tracking (cross-process)
+  web_ui.py          # Debug UI + REST API
   tools/
     __init__.py      # Tool registry
     vector_db.py     # Vector DB tools (8 tools)
     memory.py        # Memory tools (4 tools)
-
-heartbeat.py         # Introspection cycle script (root-level)
 
 scripts/
   stress_test.py     # Benchmarking tool
   snapshot.py        # LanceDB backup tool
 
 docs/
-  SPEC.md            # Heartbeat v5 + memory model design specification
+  MEMORY_REBUILD_SPEC.md  # Memory rebuild design and rationale
+  SEEDING.md              # Getting started with collections and memory
 ```
 
 ## Further Reading
 
-- [docs/SPEC.md](docs/SPEC.md) — Heartbeat loop design, memory model, and architecture decisions
+- [docs/MEMORY_REBUILD_SPEC.md](docs/MEMORY_REBUILD_SPEC.md) — Memory rebuild design and canonical format
+- [docs/SEEDING.md](docs/SEEDING.md) — Getting started with collections and memory
 - [mcp-compliance-plan.md](mcp-compliance-plan.md) — HIPAA/PCI DSS compliance plan and production hardening guide
 
 ## License

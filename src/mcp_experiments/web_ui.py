@@ -5,7 +5,6 @@ import sys
 
 from starlette.responses import HTMLResponse, JSONResponse
 
-from .activity import record_activity
 from .config import settings
 from .compliance import ServerMode
 from .tools import memory, vector_db
@@ -143,18 +142,12 @@ VECTOR_UI_PAGE = r"""<!DOCTYPE html>
 
   <div class="tab-panel" id="panel-controls">
     <div class="card">
-      <h3>Heartbeat</h3>
+      <h3>Server</h3>
       <p class="text-muted" style="margin-bottom:12px;font-size:13px">
-        The introspection cycle — quiet, self-directed moments between conversations.
+        Server status and configuration.
       </p>
       <div style="margin-bottom:12px">
         <span id="hb-status" style="font-size:14px">checking...</span>
-      </div>
-      <div id="hb-paused-info" style="display:none;margin-bottom:12px;padding:12px;border:1px solid var(--red);border-radius:var(--radius);background:rgba(248,81,73,.08)">
-        <div style="font-size:13px;color:var(--red);font-weight:500;margin-bottom:4px">Paused by tripwire</div>
-        <div id="hb-paused-reason" style="font-size:12px;color:var(--muted);margin-bottom:8px;word-break:break-word"></div>
-        <div id="hb-reset-info" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
-        <button class="btn" id="hb-reset" onclick="hbReset()" style="background:var(--red);display:none">Reset Pause</button>
       </div>
     </div>
   </div>
@@ -234,46 +227,7 @@ async function vHealth() {
   try { const d=await vApi('/health'); document.getElementById('v-status').textContent=d.mode+' mode | '+d.tools_available.length+' tools'; } catch { document.getElementById('v-status').textContent='disconnected'; }
 }
 
-// --- Heartbeat controls ---
-async function hbRefresh() {
-  try {
-    const d = await vApi('/heartbeat/status');
-    const el = document.getElementById('hb-status');
-    const pausedInfo = document.getElementById('hb-paused-info');
-    const resetBtn = document.getElementById('hb-reset');
-    const resetInfo = document.getElementById('hb-reset-info');
-    const pausedReason = document.getElementById('hb-paused-reason');
-
-    if (d.paused) {
-      el.innerHTML = '<span class="status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:6px"></span> Paused';
-      pausedInfo.style.display = 'block';
-      pausedReason.textContent = d.paused_reason || 'unknown';
-      const remaining = d.self_resets_remaining || 0;
-      const used = d.self_resets_used || 0;
-      if (remaining > 0) {
-        resetInfo.textContent = 'Auto-reset will fire on next scheduled cycle (' + remaining + ' resets remaining).';
-        resetBtn.style.display = 'none';
-      } else {
-        resetInfo.textContent = 'Self-resets exhausted (' + used + '/' + d.max_self_resets + ' used). Human reset required.';
-        resetBtn.style.display = 'inline-block';
-      }
-    } else {
-      el.innerHTML = '<span class="status-dot ok" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px"></span> Running';
-      pausedInfo.style.display = 'none';
-    }
-  } catch { document.getElementById('hb-status').textContent = 'unknown'; }
-}
-
-async function hbReset() {
-  try {
-    await vApi('/heartbeat/reset', {method:'POST'});
-    vFlash('Pause cleared', 'success');
-    hbRefresh();
-  } catch(e) { vFlash('Failed: ' + e.message); }
-}
-
 setInterval(vHealth,15000); vHealth(); vRefresh();
-setInterval(hbRefresh, 10000); hbRefresh();
 </script>
 </body>
 </html>"""
@@ -346,11 +300,6 @@ def register_web_ui(mcp) -> None:
 
     @mcp.custom_route("/api/memory/ingest", methods=["POST"])
     async def api_memory_ingest(request):
-        # REST shortcut for memory_ingest — used by the heartbeat script
-        # and other automated consumers. Same function as the MCP tool.
-        # Also called during live sessions; records activity for heartbeat
-        # scheduling.
-        record_activity()
         try:
             body = await request.json()
             return JSONResponse(json.loads(await memory.memory_ingest(
@@ -368,8 +317,6 @@ def register_web_ui(mcp) -> None:
 
     @mcp.custom_route("/api/memory/sample", methods=["GET"])
     async def api_memory_sample(request):
-        # REST shortcut for memory_sample — used by the heartbeat's
-        # "wander" mode (divergent, unforced contemplation).
         try:
             n = request.query_params.get("n")
             collection = request.query_params.get("collection")
@@ -385,8 +332,6 @@ def register_web_ui(mcp) -> None:
         # Used by the OpenCode memory plugin for passive injection at
         # session start / after compaction. Not part of the MCP tool
         # surface — a lightweight HTTP shortcut to the same function.
-        # Records activity so the heartbeat yields to active chat.
-        record_activity()
         try:
             limit = request.query_params.get("limit")
             collection = request.query_params.get("collection")
@@ -396,46 +341,3 @@ def register_web_ui(mcp) -> None:
             )))
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
-
-    # --- Heartbeat control endpoints ---
-
-    @mcp.custom_route("/api/heartbeat/status", methods=["GET"])
-    async def api_heartbeat_status(request):
-        from pathlib import Path
-        state_path = Path(settings.heartbeat_state_path)
-        state = {}
-        if state_path.exists():
-            try:
-                state = json.loads(state_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-        return JSONResponse({
-            "heartbeat_enabled": True,
-            "paused": state.get("paused", False),
-            "paused_reason": state.get("paused_reason"),
-            "paused_at": state.get("paused_at"),
-            "self_resets_remaining": state.get("self_resets_remaining", 5),
-            "self_resets_used": state.get("self_resets_used", 0),
-            "max_self_resets": 5,
-        })
-
-    @mcp.custom_route("/api/heartbeat/reset", methods=["POST"])
-    async def api_heartbeat_reset(request):
-        """Human reset: clears pause and restores self-reset counter."""
-        from pathlib import Path
-        state_path = Path(settings.heartbeat_state_path)
-        state = {}
-        if state_path.exists():
-            try:
-                state = json.loads(state_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                state = {}
-        state["paused"] = False
-        state["paused_reason"] = None
-        state["paused_at"] = None
-        state["self_resets_remaining"] = 5
-        state["self_resets_used"] = 0
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(json.dumps(state, indent=2))
-        print("[web_ui] Human reset: pause cleared, self-reset counter restored.", file=sys.stderr)
-        return JSONResponse({"status": "reset"})

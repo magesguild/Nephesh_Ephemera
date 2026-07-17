@@ -1,6 +1,6 @@
 #!/bin/bash
 # Stand up (or re-verify) a RunPod GPU pod as an Ollama inference
-# backend for the heartbeat + dreaming scripts, in one command.
+# backend, in one command.
 #
 # Handles both RunPod SSH-gateway quirks documented in AGENTS.md:
 #   1. ssh.runpod.io never runs a passed command directly — it always
@@ -20,8 +20,8 @@
 #   ./scripts/runpod_deploy.sh bm5mabv3ssu67e-64410ec8@ssh.runpod.io \
 #       ~/src/AiEntityWork/Thalia_Kernel_Modelfile qwen2.5:14b thalia:Uncensored 7860
 #
-# On success, prints the HEARTBEAT_OLLAMA_URL / HEARTBEAT_OLLAMA_API_KEY
-# lines ready to paste into .env.
+# On success, prints the OLLAMA_URL / OLLAMA_API_KEY
+# lines ready to paste into .env or opencode.jsonc.
 
 set -e
 
@@ -115,7 +115,6 @@ WITHKEY_RESPONSE="$(curl -s -H "X-Api-Key: $API_KEY" "$PROXY_URL/api/tags")"
 echo "With-key response: $WITHKEY_RESPONSE"
 
 echo ""
-echo "=== Paste into .env ==="
-echo "HEARTBEAT_MODEL=$TARGET_MODEL"
-echo "HEARTBEAT_OLLAMA_URL=$PROXY_URL"
-echo "HEARTBEAT_OLLAMA_API_KEY=$API_KEY"
+echo "=== Paste into .env or opencode.jsonc ==="
+echo "OLLAMA_URL=$PROXY_URL"
+echo "OLLAMA_API_KEY=$API_KEY"
