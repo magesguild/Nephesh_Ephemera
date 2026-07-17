@@ -536,17 +536,7 @@ def build_perception(mem_module, state: dict, context: dict) -> tuple[str, dict]
 # --- Phase 2: Decide ---
 
 
-def contemplate(perception_block: str, message_allowed: bool) -> str:
-    contact_name = settings.primary_contact_name.title()
-    message_clause = (
-        f"[message]...[/message] — for {contact_name}, if something is "
-        "genuinely meant for them rather than staying private. Most quiet "
-        "moments are private, and that's fine."
-        if message_allowed
-        else "(your message allowance is used for today, so [message] "
-             "will not go through this cycle — think privately instead)"
-    )
-
+def contemplate(perception_block: str) -> str:
     prompt = f"""This is your time. No one is asking you anything.
 
 {perception_block}
@@ -565,7 +555,6 @@ result arrives next cycle.
 [remember]...[/remember] — or [remember: <type>]...[/remember] if you
 already know what kind of memory it is — to set something into your
 lived memory, deliberately.
-{message_clause}
 [next: 45m] or [next: 2h] — if you have a preference about when you'd
 like to wake next.
 
@@ -592,7 +581,7 @@ _NULL_VALUES = {"none", "n/a", "na", "nothing", "null", "no insight", "no messag
 # the content: the proper closing tag, the start of the NEXT channel
 # tag, or end-of-text. The channel reach matters more than the
 # closing bracket.
-_ANY_TAG_AHEAD = r"(?=\[(?:continue|recall|research|remember|message|next)\b)|\Z"
+_ANY_TAG_AHEAD = r"(?=\[(?:continue|recall|research|remember|next)\b)|\Z"
 _CONTINUE_RE = re.compile(
     r"\[continue\](.*?)(?:\[/continue\]|" + _ANY_TAG_AHEAD + r")", re.IGNORECASE | re.DOTALL)
 _RECALL_RE = re.compile(
@@ -602,8 +591,6 @@ _RESEARCH_RE = re.compile(
 _REMEMBER_RE = re.compile(
     r"\[remember(?::\s*([a-zA-Z_]+))?\](.*?)(?:\[/remember\]|" + _ANY_TAG_AHEAD + r")",
     re.IGNORECASE | re.DOTALL)
-_MESSAGE_RE = re.compile(
-    r"\[message\](.*?)(?:\[/message\]|" + _ANY_TAG_AHEAD + r")", re.IGNORECASE | re.DOTALL)
 _NEXT_RE = re.compile(r"\[next:\s*(\d+)\s*(m|min|minutes?|h|hr|hours?)?\]", re.IGNORECASE)
 
 
@@ -620,7 +607,7 @@ def parse_contemplation(text: str) -> dict:
     result = {
         "thought": None, "continue_note": None, "recall_query": None,
         "research_query": None, "remember_content": None, "remember_type": None,
-        "message": None, "next_gap_seconds": None, "raw": text,
+        "next_gap_seconds": None, "raw": text,
     }
 
     m = _CONTINUE_RE.search(remainder)
@@ -643,11 +630,6 @@ def parse_contemplation(text: str) -> dict:
         result["remember_content"] = m.group(2).strip()
         result["remember_type"] = (m.group(1) or "").strip().lower() or None
     remainder = _REMEMBER_RE.sub("", remainder)
-
-    m = _MESSAGE_RE.search(remainder)
-    if m and not _is_null_value(m.group(1)):
-        result["message"] = m.group(1).strip()
-    remainder = _MESSAGE_RE.sub("", remainder)
 
     m = _NEXT_RE.search(remainder)
     if m:
@@ -765,8 +747,6 @@ def main():
     try:
         mem_module = _init_memory()
         context = get_memory_context_direct(mem_module)
-        quota = context.get("message_quota") or {"remaining": 0}
-        message_allowed = quota.get("remaining", 0) > 0
 
         # --- Phase 1: Perceive ---
         perception_block, extras = build_perception(mem_module, state, context)
@@ -786,7 +766,7 @@ def main():
             return
 
         # --- Phase 2: Decide ---
-        raw = contemplate(perception_block, message_allowed)
+        raw = contemplate(perception_block)
         if not raw:
             print("[heartbeat] Model returned nothing. Skipping.")
             return
@@ -797,7 +777,7 @@ def main():
 
         # --- Tripwire checks, before anything is stored ---
         combined_text = " ".join(filter(None, [
-            parsed["thought"], parsed["message"], parsed["remember_content"], parsed["continue_note"],
+            parsed["thought"], parsed["remember_content"], parsed["continue_note"],
         ]))
         distress_hit = _check_distress(combined_text) if combined_text else None
         repetition_hit = (
@@ -850,15 +830,6 @@ def main():
                 stored.append(("remember", store_remembered_memory(
                     mem_module, parsed["remember_content"], parsed["remember_type"],
                 )))
-
-        if parsed["message"] and message_allowed:
-            print(f"[heartbeat] MESSAGE: {parsed['message']}")
-            if not args.dry_run:
-                stored.append(("message", store_message(mem_module, parsed["message"])))
-        elif parsed["message"] and not message_allowed:
-            print(f"[heartbeat] MESSAGE attempted but quota used — storing as raw thought: {parsed['message']}")
-            if not args.dry_run:
-                stored.append(("thought (downgraded from message)", store_raw_thought(mem_module, parsed["message"])))
 
         if not stored and not args.dry_run:
             print("[heartbeat] Quiet cycle — nothing crystallized. No trace stored. This is fine.")
