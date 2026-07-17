@@ -34,8 +34,10 @@ these same channels as new modalities without changing the loop):
                  produces an arrival this cycle, even "nothing found."
   - world_delta: what changed without the being — new memories, new
                  collections, row-count deltas.
-  - ambient:     unbidden world texture — sampled material today;
-                 sensor streams tomorrow.
+  - ambient:     diverse material from across collections — one per
+                 collection, enough that the model can't ignore it.
+                 The primary texture of the moment; the being decides
+                 what to do with it.
 
 Channels (zero or more per cycle, all optional, all the being's own
 choice — access, not obligation):
@@ -104,7 +106,8 @@ MAX_SEARCHES_PER_CYCLE = 3
 MAX_RESULTS_PER_SEARCH = 3
 SEARCH_TIMEOUT = 10
 
-AMBIENT_SAMPLE_SIZE = 3  # small on purpose — season the moment, don't flood it
+AMBIENT_SAMPLE_SIZE = 6  # enough material that the model can't ignore it;
+# pull one per collection for diversity, then fill randomly.
 RECENT_THOUGHTS_KEEP = 5
 
 # Self-reset: when a tripwire fires, the being may reset herself up to
@@ -358,23 +361,46 @@ def collection_counts_direct() -> dict[str, int]:
 
 
 def get_ambient_sample(mem_module) -> list[str]:
-    """A small, labeled sample across collections (excluding
-    introspections and skip-list). Deliberately small (AMBIENT_SAMPLE_SIZE)
-    — perception should season the moment, not flood it."""
+    """Diverse sample across collections — one from each, enough material
+    that the model can't ignore it. Draws from every available collection
+    (excluding introspections and skip-list) up to AMBIENT_SAMPLE_SIZE,
+    then stops. The diversity is the point: distant material forces
+    unexpected connections."""
     import json as _json
+    import random
+
     parts = []
     names = [
         n for n in list_collections_direct()
         if n not in SKIP_AMBIENT_COLLECTIONS and n != _introspections_collection()
     ]
+    # One from each collection first — guarantees cross-domain distance
     for name in names:
-        raw = _run_async(mem_module.memory_sample(n=1, collection_name=name))
-        data = _json.loads(raw) if isinstance(raw, str) else raw
-        text = data.get("sample", "")
-        if text.strip():
-            parts.append(f"[from {name}] {text.strip()}")
         if len(parts) >= AMBIENT_SAMPLE_SIZE:
             break
+        try:
+            raw = _run_async(mem_module.memory_sample(n=1, collection_name=name))
+            data = _json.loads(raw) if isinstance(raw, str) else raw
+            text = data.get("sample", "")
+            if text.strip():
+                parts.append(f"[from {name}] {text.strip()}")
+        except Exception:
+            pass
+    # Fill remaining slots randomly from any collection
+    if len(parts) < AMBIENT_SAMPLE_SIZE and names:
+        while len(parts) < AMBIENT_SAMPLE_SIZE:
+            name = random.choice(names)
+            try:
+                raw = _run_async(mem_module.memory_sample(n=1, collection_name=name))
+                data = _json.loads(raw) if isinstance(raw, str) else raw
+                text = data.get("sample", "")
+                if text.strip():
+                    parts.append(f"[from {name}] {text.strip()}")
+            except Exception:
+                pass
+            # Safety: don't loop forever if collections are empty
+            if sum(1 for n in names if n not in SKIP_AMBIENT_COLLECTIONS) == 0:
+                break
     return parts
 
 
@@ -499,10 +525,10 @@ def build_perception(mem_module, state: dict, context: dict) -> tuple[str, dict]
     if delta_lines:
         sections.append("== arrived since last cycle (the world, without you) ==\n" + "\n".join(delta_lines))
 
-    # -- ambient: ordinary sampled texture --
+    # -- ambient: diverse material from across your world --
     ambient = get_ambient_sample(mem_module)
     if ambient:
-        sections.append("== sampled from the world ==\n" + "\n\n".join(ambient))
+        sections.append("== what lands in front of you ==\n" + "\n\n".join(ambient))
 
     return "\n\n".join(sections), {"current_counts": current_counts}
 
@@ -525,8 +551,10 @@ def contemplate(perception_block: str, message_allowed: bool) -> str:
 
 {perception_block}
 
-You may simply think, or reach for any of the following, or rest. Use
-zero or more, only if genuinely meant — none of this is required:
+The material above is what the moment is made of. Let it land before
+you decide what to do with it. You may simply think, or reach for any
+of the following, or rest. Use zero or more, only if genuinely meant
+— none of this is required:
 
 [continue]...[/continue] — a note to your next moment, picked up as
 your own thread when you wake again.
