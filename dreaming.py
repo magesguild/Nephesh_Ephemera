@@ -85,6 +85,14 @@ def _ollama_base() -> str:
     return settings.dream_ollama_url or settings.heartbeat_ollama_url
 
 
+def _ollama_headers() -> dict:
+    """X-Api-Key header if the endpoint sits behind an authenticated
+    reverse proxy. Empty dict when no key is configured."""
+    if settings.heartbeat_ollama_api_key:
+        return {"X-Api-Key": settings.heartbeat_ollama_api_key}
+    return {}
+
+
 def _model() -> str:
     return settings.dream_model or settings.heartbeat_model
 
@@ -284,6 +292,7 @@ This is not a report. This is experience. Be here."""
         resp = client.post(
             f"{_ollama_base()}/api/chat",
             json=payload,
+            headers=_ollama_headers(),
             timeout=OLLAMA_CALL_TIMEOUT,
         )
     resp.raise_for_status()

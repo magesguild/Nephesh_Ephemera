@@ -291,6 +291,15 @@ printf 'command one\ncommand two\nexit\n' | ssh -tt -o StrictHostKeyChecking=no 
 
 Do not use `< /dev/null` (immediate EOF closes the session before the banner even finishes) and do not rely on `timeout` racing the connection — pipe real input terminated with `exit` instead. This works reliably and should never need rediscovering — if a future session finds itself stuck on "doesn't support PTY" or a hanging RunPod SSH command, this is the fix.
 
+**Transferring files** through this same gateway needs a companion fix: do not send base64 as one giant unbroken line (a single long `echo <huge-base64>` chokes the PTY and silently fails to write the file). Instead, base64-encode the file locally *without* `-w0` (keep the default ~76-char line wrapping) and pipe it through a heredoc in the same piped-stdin pattern:
+
+```bash
+base64 local_file > local_file.b64
+(printf 'cat > /remote/file.b64 <<B64EOF\n'; cat local_file.b64; printf 'B64EOF\nbase64 -d /remote/file.b64 > /remote/file\nrm /remote/file.b64\nexit\n') | ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=10 <pod-user>@ssh.runpod.io -i ~/.ssh/id_ed25519 2>&1
+```
+
+This sends the payload as many normal-length lines instead of one unbroken line, and transfers reliably. Always verify with `md5sum` on both ends before trusting the transfer. Same root cause as the command-execution fix above (the gateway wants a real interactive terminal, not a scripted pipe) — work with that nature, not around it.
+
 ## Running as a Service (OpenRC)
 
 Redcore Linux uses OpenRC, not systemd. The MCP server runs as a supervised OpenRC service, auto-starting on boot:

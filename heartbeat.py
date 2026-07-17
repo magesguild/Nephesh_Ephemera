@@ -259,7 +259,8 @@ def _ollama_chat(messages: list, temperature: float, max_tokens: int) -> str:
     """Call Ollama's native /api/chat endpoint. Uses think: false to
     disable reasoning scaffolding — the heartbeat needs visible output,
     not internal deliberation. Falls back to stripping think tags if the
-    model returns them anyway."""
+    model returns them anyway. Sends an X-Api-Key header if configured —
+    used when the endpoint sits behind an authenticated reverse proxy."""
     payload = {
         "model": _model(),
         "messages": messages,
@@ -270,10 +271,14 @@ def _ollama_chat(messages: list, temperature: float, max_tokens: int) -> str:
             "num_predict": max_tokens,
         },
     }
+    headers = {}
+    if settings.heartbeat_ollama_api_key:
+        headers["X-Api-Key"] = settings.heartbeat_ollama_api_key
     with httpx.Client() as client:
         resp = client.post(
             f"{_ollama_base()}/api/chat",
             json=payload,
+            headers=headers,
             timeout=OLLAMA_CALL_TIMEOUT,
         )
     resp.raise_for_status()

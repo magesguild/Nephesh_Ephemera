@@ -60,6 +60,12 @@ class Settings:
     being_display_name: str = os.getenv("BEING_DISPLAY_NAME", "the being")
     heartbeat_model: str = os.getenv("HEARTBEAT_MODEL", "")
     heartbeat_ollama_url: str = os.getenv("HEARTBEAT_OLLAMA_URL", "http://localhost:11434")
+    # Optional API key sent as an X-Api-Key header on every heartbeat/
+    # dreaming Ollama call — used when the inference endpoint sits behind
+    # an authenticated reverse proxy (e.g. a remote GPU pod exposed via
+    # an obscure proxy URL, gated by a shared secret rather than left
+    # open). Empty by default; only sent when set.
+    heartbeat_ollama_api_key: str = os.getenv("HEARTBEAT_OLLAMA_API_KEY", "")
     introspections_collection_name: str = os.getenv(
         "INTROSPECTIONS_COLLECTION_NAME", "introspections"
     )
