@@ -27,8 +27,8 @@ DREAMING_SCRIPT = Path(__file__).resolve().parent.parent.parent / "dreaming.py"
 # internal alarm (90s); this just ensures the scheduler loop can never
 # get stuck waiting on a runaway child process indefinitely.
 SUBPROCESS_TIMEOUT_SECONDS = 120
-# Dream sessions are longer — generous backstop.
-DREAM_SUBPROCESS_TIMEOUT_SECONDS = 600
+# Dream sessions are longer — timeout scales with cycle count.
+DREAM_TIMEOUT_PER_CYCLE = 180  # seconds per cycle (generous for inference + storage)
 
 # Runtime state — mutable, toggled via API endpoints.
 _runtime_state = {
@@ -97,6 +97,7 @@ async def run_dream_session(cycles: int = 3, seed: str | None = None) -> dict:
             cmd.extend(["--seed", seed])
 
         print(f"[scheduler] Starting dream session: {cycles} cycles", file=sys.stderr)
+        dream_timeout = DREAM_TIMEOUT_PER_CYCLE * cycles
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -104,12 +105,12 @@ async def run_dream_session(cycles: int = 3, seed: str | None = None) -> dict:
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=DREAM_SUBPROCESS_TIMEOUT_SECONDS
+                proc.communicate(), timeout=dream_timeout
             )
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            return {"error": "Dream session exceeded timeout", "timeout": DREAM_SUBPROCESS_TIMEOUT_SECONDS}
+            return {"error": "Dream session exceeded timeout", "timeout": dream_timeout}
 
         output = stdout.decode(errors="replace")
         errors = stderr.decode(errors="replace")

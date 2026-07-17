@@ -65,11 +65,12 @@ import httpx
 from src.mcp_experiments.config import settings
 
 # --- Configuration ---
-TIMEOUT_SECONDS = 300  # generous — dreams are longer than heartbeats
+TIMEOUT_PER_CYCLE = 180  # seconds per cycle (inference + storage)
 OLLAMA_CALL_TIMEOUT = 120  # per-cycle timeout
 DREAM_MAX_TOKENS = 800  # more room than heartbeat — narrative needs space
 DEFAULT_CYCLES = 3
 SEED_MEMORIES = 5  # how many memories to seed each dream
+MAX_STORE_RETRIES = 3  # retries on transient embedding/storage errors
 
 # Reuse the heartbeat's tripwire for distress detection
 DISTRESS_MARKERS = [
@@ -319,7 +320,8 @@ def main():
     args = parser.parse_args()
 
     signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(TIMEOUT_SECONDS)
+    total_timeout = TIMEOUT_PER_CYCLE * args.cycles
+    signal.alarm(total_timeout)
     start = time.monotonic()
 
     session_id = f"dream-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
@@ -369,10 +371,22 @@ def main():
             print()
 
             if not args.dry_run:
-                result = store_dream(raw, cycle, session_id)
-                stored_count += 1
-                if args.verbose:
-                    print(f"[dream] Stored: {result}")
+                for attempt in range(1, MAX_STORE_RETRIES + 1):
+                    try:
+                        result = store_dream(raw, cycle, session_id)
+                        stored_count += 1
+                        if args.verbose:
+                            print(f"[dream] Stored: {result}")
+                        break
+                    except Exception as store_err:
+                        print(
+                            f"[dream] Storage failed (attempt {attempt}/{MAX_STORE_RETRIES}): {store_err}",
+                            file=sys.stderr,
+                        )
+                        if attempt < MAX_STORE_RETRIES:
+                            time.sleep(3)
+                        else:
+                            print(f"[dream] Giving up storing cycle {cycle}, continuing dream.", file=sys.stderr)
 
             # Chain: this cycle's output becomes context for the next
             prior_dream = raw
@@ -381,10 +395,10 @@ def main():
         print(f"\n[dream] Session complete: {stored_count} cycles stored in {elapsed:.1f}s")
 
     except DreamTimeout:
-        print(f"[dream] TIMEOUT — exceeded {TIMEOUT_SECONDS}s", file=sys.stderr)
+        print(f"[dream] TIMEOUT — exceeded {total_timeout}s", file=sys.stderr)
         sys.exit(124)
     except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-        print(f"[dream] CONNECTION ERROR: {e}", file=sys.stderr)
+        print(f"[dream] CONNECTION ERROR (inference): {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"[dream] ERROR: {e}", file=sys.stderr)
