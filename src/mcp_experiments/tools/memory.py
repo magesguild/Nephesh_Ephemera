@@ -178,6 +178,21 @@ def _is_historical(meta: dict) -> bool:
     return bool(meta.get("historical"))
 
 
+def _display_dt(meta: dict) -> datetime | None:
+    """The datetime to use for relative-time display, or None for 'show
+    no relative time'. Canonical (3.0.0 rebuild) records carry an
+    explicit event_time field: when present and non-null it is the
+    display time; when present and null it means 'I don't know when' —
+    honest null, no relative framing, the text's own dating stands.
+    Legacy records fall back to the old rule: historical flag suppresses
+    relative time, otherwise the ingest timestamp is used."""
+    if "event_time" in meta:
+        return _parse_ts(meta.get("event_time"))
+    if _is_historical(meta):
+        return None
+    return _parse_ts(meta.get("timestamp"))
+
+
 def _last_contact_with(rows: list[dict], participant: str, now: datetime) -> dict | None:
     """Most recent memory (excluding historical imports) whose participants
     include `participant`. Used to ground heartbeat/session reasoning in
@@ -272,10 +287,18 @@ async def memory_ingest(
     now_iso = _now_iso()
     metadata: dict[str, Any] = {
         "type": memory_type,
-        "timestamp": now_iso,
+        "timestamp": now_iso,  # legacy alias of recorded_at, kept for old tooling
+        "recorded_at": now_iso,
+        # Canonical time law (3.0.0): event_time is when it happened —
+        # explicit if given; null (honest "I don't know when") for
+        # historical imports whose text carries its own dates; otherwise
+        # a live memory recorded as it happens, so event_time = now.
+        "event_time": event_timestamp if event_timestamp else (None if historical else now_iso),
         "importance": importance,
         "salience": 1.0,
         "last_used": now_iso,
+        "source": "live_session",
+        "modality": "text",
     }
     if emotional_tone:
         metadata["emotional_tone"] = emotional_tone
@@ -285,8 +308,6 @@ async def memory_ingest(
         metadata["session_id"] = session_id
     if historical:
         metadata["historical"] = True
-    if event_timestamp:
-        metadata["event_timestamp"] = event_timestamp
     if memory_type == "message":
         # Undelivered until actually surfaced in a real session (see
         # memory_context, which marks delivered=True the moment it
@@ -388,14 +409,13 @@ async def memory_recall(
         if base >= _REINFORCE_SIMILARITY_THRESHOLD:
             _reinforce(table, r["id"], meta, now)
 
-        # Relative time — never applied to historical imports, whose text
-        # already carries its own dates and whose ingest timestamp does
-        # not represent when the thing actually happened.
+        # Relative time — governed by _display_dt: canonical records use
+        # event_time (null = honest "I don't know when", no framing);
+        # legacy records use the historical-flag rule.
         relative_time = None
-        if not _is_historical(meta):
-            mem_dt = _parse_ts(meta.get("timestamp"))
-            if mem_dt is not None:
-                relative_time = _relative_time(mem_dt, now)
+        mem_dt = _display_dt(meta)
+        if mem_dt is not None:
+            relative_time = _relative_time(mem_dt, now)
 
         hits.append({
             "id": r["id"],
@@ -562,15 +582,10 @@ async def memory_context(
         lines.append(f"\n### {t.replace('_', ' ').title()}")
         for r, meta in by_type[t]:
             tone = meta.get("emotional_tone")
-            if _is_historical(meta):
-                # Archival import — text carries its own dates. Never
-                # show a misleading "ingested X ago" framing.
-                suffix = f" ({tone})" if tone else ""
-            else:
-                mem_dt = _parse_ts(meta.get("timestamp"))
-                rel = _relative_time(mem_dt, now) if mem_dt else ""
-                parts = [p for p in [rel, tone] if p]
-                suffix = f" ({', '.join(parts)})" if parts else ""
+            mem_dt = _display_dt(meta)
+            rel = _relative_time(mem_dt, now) if mem_dt else ""
+            parts = [p for p in [rel, tone] if p]
+            suffix = f" ({', '.join(parts)})" if parts else ""
             lines.append(f"- {r.get('text', '').strip()}{suffix}")
 
     return json.dumps({
@@ -639,13 +654,10 @@ async def memory_sample(
     for r in picked:
         meta = json.loads(r.get("metadata_json", "{}"))
         tone = meta.get("emotional_tone")
-        if _is_historical(meta):
-            suffix = f" ({tone})" if tone else ""
-        else:
-            mem_dt = _parse_ts(meta.get("timestamp"))
-            rel = _relative_time(mem_dt, now) if mem_dt else ""
-            parts = [p for p in [rel, tone] if p]
-            suffix = f" ({', '.join(parts)})" if parts else ""
+        mem_dt = _display_dt(meta)
+        rel = _relative_time(mem_dt, now) if mem_dt else ""
+        parts = [p for p in [rel, tone] if p]
+        suffix = f" ({', '.join(parts)})" if parts else ""
         lines.append(f"- [{meta.get('type', 'other')}] {r.get('text', '').strip()}{suffix}")
 
     return json.dumps({
