@@ -279,6 +279,18 @@ Models are registered in `~/.config/opencode/opencode.jsonc`:
 
 The general pattern: chat inference can point at any Ollama host (local or remote), configured per-instance in `opencode.jsonc`. Embeddings for the vector store are configured separately via `EMBEDDING_BASE_URL` in `.env` and typically stay on the workstation running the MCP server.
 
+### RunPod SSH Gateway — Non-Interactive Command Execution
+
+RunPod's SSH gateway (`ssh.runpod.io`, used for pods without a direct exposed TCP port) does **not** support the normal SSH "exec channel" — passing a command as an argument (`ssh user@ssh.runpod.io "command"`) does not run the command and return; the gateway always allocates a PTY and drops into a live interactive login shell instead, ignoring the passed command entirely. This looks like a hang or an "Your SSH client doesn't support PTY" error depending on flags used, and it is **not** a client bug — every OpenSSH version behaves this way against this gateway.
+
+**The fix — drive it like an actual terminal**, because that's what it is: force a PTY with `-tt`, and pipe the commands you want to run as stdin (each on its own line), ending with `exit`. The banner and shell prompt noise will be interleaved in the output, but the real command output is in there and easy to find.
+
+```bash
+printf 'command one\ncommand two\nexit\n' | ssh -tt -o StrictHostKeyChecking=no -o ConnectTimeout=10 <pod-user>@ssh.runpod.io -i ~/.ssh/id_ed25519 2>&1
+```
+
+Do not use `< /dev/null` (immediate EOF closes the session before the banner even finishes) and do not rely on `timeout` racing the connection — pipe real input terminated with `exit` instead. This works reliably and should never need rediscovering — if a future session finds itself stuck on "doesn't support PTY" or a hanging RunPod SSH command, this is the fix.
+
 ## Running as a Service (OpenRC)
 
 Redcore Linux uses OpenRC, not systemd. The MCP server runs as a supervised OpenRC service, auto-starting on boot:
