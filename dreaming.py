@@ -170,13 +170,27 @@ def get_memory_sample(mem_module, n: int = SEED_MEMORIES) -> dict:
 
 def store_dream(text: str, cycle: int, session_id: str) -> dict:
     """Store dream output directly to LanceDB in the dream collection.
-    No type label, no importance — raw narrative experience."""
+    No type label, no importance — raw narrative experience. Long dreams
+    are chunked the same way vector_store_ingest chunks documents, since
+    mxbai-embed-large has a 512-token context window and dream output
+    can exceed that."""
     from src.mcp_experiments.tools.vector_db import _ensure_table, _get_ef
 
     collection_name = _dream_collection()
     table = _ensure_table(collection_name)
-    vector = _get_ef().embed(text)
-    dream_id = str(uuid.uuid4())
+    ef = _get_ef()
+
+    # Chunk at 500 chars with 50-char overlap (same as vector_store_ingest)
+    CHUNK_SIZE = 500
+    CHUNK_OVERLAP = 50
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + CHUNK_SIZE
+        chunks.append(text[start:end])
+        start = end - CHUNK_OVERLAP
+    if not chunks:
+        chunks = [text]
 
     metadata = {
         "timestamp": _now_iso(),
@@ -185,14 +199,22 @@ def store_dream(text: str, cycle: int, session_id: str) -> dict:
         "participants": [settings.being_display_name.lower()],
     }
 
-    table.add([{
-        "id": dream_id,
-        "text": text,
-        "vector": vector,
-        "metadata_json": json.dumps(metadata),
-    }])
+    rows = []
+    first_id = None
+    for i, chunk in enumerate(chunks):
+        chunk_id = str(uuid.uuid4())
+        if first_id is None:
+            first_id = chunk_id
+        chunk_meta = {**metadata, "chunk_index": i, "total_chunks": len(chunks)}
+        rows.append({
+            "id": chunk_id,
+            "text": chunk,
+            "vector": ef.embed(chunk),
+            "metadata_json": json.dumps(chunk_meta),
+        })
 
-    return {"status": "stored", "id": dream_id, "collection": collection_name}
+    table.add(rows)
+    return {"status": "stored", "id": first_id, "collection": collection_name, "chunks": len(chunks)}
 
 
 # --- Dream generation ---
