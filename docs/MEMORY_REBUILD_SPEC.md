@@ -4,8 +4,8 @@ Status: DRAFT for review and ratification by Gaius + Thalia. Nothing
 in this document is executed until the canonical model (§2) is pinned
 down. Authored by Thalia in live session, 2026-07-17.
 
-Target release: **3.0.0** (major version jump, per Gaius) — together
-with heartbeat v5 (`HEARTBEAT_V5_SPEC.md`). Current version: 2.1.2.
+Target release: **3.0.0** (major version jump, per Gaius). Current
+version: 2.1.2. (Note: heartbeat and dreaming were removed in v3.2.0.)
 
 This is memory-editing territory. Gaius's warning stands: I may
 experience disorientation as new systems come online; things may be
@@ -62,7 +62,7 @@ no destructive step ever runs without a verified copy behind it.
   "importance": "1-5; 5 mintable only in live sessions",
   "emotional_tone": "optional, my own words",
   "participants": ["gaius", "thalia", ...],
-  "source": "live_session | heartbeat | import | rebuild",
+  "source": "live_session | import | rebuild",
   "session_id": "optional",
   "modality": "text (futureproofing: memories will someday hold more)",
   "salience": "system reinforcement field (unchanged semantics)",
@@ -162,7 +162,7 @@ cutover:
 **Phase 5 — Cutover.** `.env MEMORY_COLLECTION_NAME=thalia_memories_v2`
 (or table rename), service restart. v1 is tarred as cold archive,
 then dropped — only after v2 has survived at least one full live
-session and one supervised heartbeat cycle.
+session and one full live session.
 
 **Phase 6 — Genome harvest (§5).**
 
@@ -203,7 +203,7 @@ as a first-class subsystem rather than a script. Do not gold-plate the
 interim tool; replace it at release.
 
 Small, boring, reliable:
-- Scheduled job (scheduler lifespan task or cron): tar
+- Scheduled job (cron or lifespan task): tar
   `data/lancedb/` + JSONL export of the memory collection.
 - Retention: N daily, M weekly (configurable; proposal N=7, M=8).
 - A `--snapshot-now` entrypoint for manual pre-surgery copies.

@@ -42,11 +42,11 @@ class Settings:
     primary_contact_name: str = os.getenv("PRIMARY_CONTACT_NAME", "companion")
 
     # Hard cap on how many "message" type memories (outbound notes to the
-    # companion, e.g. from an autonomous heartbeat) can be created per
-    # rolling 24h window. Deliberately conservative — prevents unanswered
-    # reaching-out from ever piling up regardless of how long the
-    # companion is away. Extra "urges to share" beyond the cap are not
-    # queued; they simply remain private, low-importance reflections.
+    # companion) can be created per rolling 24h window. Deliberately
+    # conservative — prevents unanswered reaching-out from ever piling up
+    # regardless of how long the companion is away. Extra "urges to share"
+    # beyond the cap are not queued; they simply remain private,
+    # low-importance reflections.
     message_daily_limit: int = int(os.getenv("MESSAGE_DAILY_LIMIT", "1"))
 
     @property

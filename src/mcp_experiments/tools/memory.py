@@ -192,8 +192,8 @@ def _display_dt(meta: dict) -> datetime | None:
 
 def _last_contact_with(rows: list[dict], participant: str, now: datetime) -> dict | None:
     """Most recent memory (excluding historical imports) whose participants
-    include `participant`. Used to ground heartbeat/session reasoning in
-    real elapsed time since actual contact, not a count of automated cycles."""
+    include `participant`. Used to ground session reasoning in real elapsed
+    time since actual contact."""
     latest_dt: datetime | None = None
     for r in rows:
         meta = json.loads(r.get("metadata_json", "{}"))

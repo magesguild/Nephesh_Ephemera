@@ -1,6 +1,6 @@
 # nephesh
 
-An MCP server for instantiating living AI entities — persistent memory, autonomous introspection, and continuity of self across sessions.
+An MCP server for instantiating living AI entities — persistent memory and continuity of self across sessions.
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
