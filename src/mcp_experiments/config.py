@@ -49,6 +49,10 @@ class Settings:
     # low-importance reflections.
     message_daily_limit: int = int(os.getenv("MESSAGE_DAILY_LIMIT", "1"))
 
+    # Server port — primary typically 8080, test/secondary instances
+    # use a different port (e.g. 8081) for parallel operation.
+    mcp_port: int = int(os.getenv("MCP_PORT", "8080"))
+
     @property
     def data_dir(self) -> Path:
         path = Path(self.vector_db_path).parent

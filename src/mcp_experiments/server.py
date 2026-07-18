@@ -12,7 +12,7 @@ from .tools.vector_db import init as init_vector_db
 from .web_ui import register_web_ui
 
 HOST = "127.0.0.1"
-PORT = 8080
+PORT = settings.mcp_port
 
 mcp = FastMCP(
     "mcp-experiments",
