@@ -56,12 +56,13 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `COMPLIANT_AUTH_TOKEN` | | Auth token (compliant mode only) |
 | `COMPLIANT_AUDIT_LOG` | `./data/audit.log` | Audit log path (compliant mode only) |
 
-## Web Endpoints
+## API Endpoints
+
+REST shortcuts for local tooling (e.g. the OpenCode memory plugin). The MCP tools are the primary interface; these are HTTP convenience wrappers.
 
 | URL | Description |
 |---|---|
-| `/` | Debug UI for vector tools |
-| `/sse` | MCP SSE endpoint (for AI clients) |
+| `/sse` | MCP SSE transport (for AI clients) |
 | `/api/health` | Health check |
 | `/api/collections` | List collections |
 | `/api/collections/{name}` | Collection info |
@@ -152,7 +153,7 @@ src/mcp_experiments/
   server.py          # FastMCP server, health tool, run()
   config.py          # Environment variable settings
   compliance.py      # Compliance levels and tool filtering
-  web_ui.py          # Debug UI + REST API
+  web_ui.py          # REST API shortcuts (for local plugin tooling)
   tools/
     __init__.py      # Tool registry
     vector_db.py     # Vector DB tools (8 tools)

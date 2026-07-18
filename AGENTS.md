@@ -36,7 +36,7 @@ There is no linter, formatter, or test suite configured. Run `uv run python -m p
 server.py          -- FastMCP instance, health tool, run() entry point
 config.py          -- Settings class (reads .env via python-dotenv)
 compliance.py      -- ComplianceLevel/ServerMode enums, tool filtering
-web_ui.py          -- Starlette routes: chat UI, debug UI, REST API
+web_ui.py          -- Starlette routes: REST API shortcuts for local plugin tooling
 tools/__init__.py  -- Tool registry: register_all(), compliance gating
 tools/vector_db.py -- 7 vector DB tools + OllamaEmbeddingFunction
 tools/memory.py    -- 4 memory tools for persistent presence (reinforced recall)
@@ -279,8 +279,7 @@ Snapshot settings: `SNAPSHOT_DIR` — where `scripts/snapshot.py` writes LanceDB
 
 ## Web UI
 
-`web_ui.py` registers Starlette routes on the FastMCP app. A full-page HTML SPA is embedded as an inline string:
-- `VECTOR_UI_PAGE`: debug tabs for collections, search, ingestion
+`web_ui.py` registers Starlette REST API routes on the FastMCP app — lightweight HTTP shortcuts used by the OpenCode memory plugin for passive session-start injection. The in-browser debug UI was removed; we don't need it anymore.
 
 REST API endpoints are under `/api/` and delegate to the same Python functions as the MCP tools.
 
