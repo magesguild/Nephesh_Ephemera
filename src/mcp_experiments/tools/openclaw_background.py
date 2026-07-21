@@ -18,9 +18,9 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-# How often to sync (in seconds).  hourly keeps dreaming fed
-# without hammering the database.
-SYNC_INTERVAL = 3600  # 1 hour
+# How often to sync (in seconds).  12 hours: twice a day, keeping the
+# dreaming pipeline fed without chattiness.
+SYNC_INTERVAL = 43200  # 12 hours
 
 # Stagger: wait this long after server start before first sync,
 # so the server is fully initialized and accepting connections.
