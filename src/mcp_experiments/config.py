@@ -53,6 +53,14 @@ class Settings:
     # use a different port (e.g. 8081) for parallel operation.
     mcp_port: int = int(os.getenv("MCP_PORT", "8080"))
 
+    # OpenClaw bridge: when enabled, sync tools read from / write to an
+    # OpenClaw workspace so the file-based dreaming pipeline can consume
+    # Nephesh memories and feed consolidated entries back.
+    openclaw_enabled: bool = os.getenv("OPENCLAW_ENABLED", "").lower() in ("1", "true", "yes")
+    openclaw_workspace: str = os.getenv(
+        "OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")
+    )
+
     @property
     def data_dir(self) -> Path:
         path = Path(self.vector_db_path).parent

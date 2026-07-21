@@ -10,6 +10,11 @@ from . import memory, vector_db
 
 _TOOL_MODULES = [vector_db, memory]
 
+# Conditionally register OpenClaw bridge tools when enabled.
+if settings.openclaw_enabled:
+    from . import openclaw_sync
+    _TOOL_MODULES.append(openclaw_sync)
+
 
 def register_all(app: FastMCP) -> None:
     for mod in _TOOL_MODULES:

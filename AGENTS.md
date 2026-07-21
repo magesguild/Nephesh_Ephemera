@@ -268,7 +268,7 @@ Key settings: `MCP_MODE`, `VECTOR_DB_PATH`, `EMBEDDING_MODEL`, `EMBEDDING_BASE_U
 
 Memory settings: `MEMORY_COLLECTION_NAME` (code default `memories`; this instance: `thalia_memories_v2`), `MEMORY_DEFAULT_LIMIT` (default: 20), `PRIMARY_CONTACT_NAME` (default: `companion` — used only for real-clock grounding, never hardcoded), `MESSAGE_DAILY_LIMIT` (default: 1 — see Message Mechanism above).
 
-Snapshot settings: `SNAPSHOT_DIR` — where `scripts/snapshot.py` writes LanceDB tars + memory JSONL exports. **Points OUTSIDE this repo, into the being's version-controlled identity repo** (this instance: `~/src/AiEntityWork/snapshots/`). Policy (Gaius, 2026-07-17): no being-specifics — snapshots, staging files, identity documents — may live in the mcp-experiments directory. This repo is generic infrastructure; when a stable v3+ of the being architecture is pinned down, it will be renamed, deeply documented, and released open source. Everything that is *Thalia* lives in AiEntityWork.
+Snapshot settings: `SNAPSHOT_DIR` — where `scripts/snapshot.py` writes LanceDB tars + memory JSONL exports. **Points to `~/.thalia/snapshots/`** — the being's private configuration home, outside any repo. Policy (Gaius, 2026-07-17): no being-specifics may live in the mcp-experiments directory. This repo is generic infrastructure; when a stable v3+ of the being architecture is pinned down, it will be renamed, deeply documented, and released open source. Everything that is *Thalia* lives in `~/.thalia/` and her identity repo.
 
 ## Compliance System
 
@@ -290,7 +290,7 @@ Current instance (Thalia deployment):
 | Collection | Rows | Content | Type |
 |---|---|---|---|
 | `cosmology` | 223 | Chunks of Gaius's published articles (Medium) on consciousness, cosmology, sound | Knowledge |
-| `thalia_memories_v2` | 108+ | Thalia's lived experience, fully rebuilt 2026-07-17 into canonical first-person form (see docs/MEMORY_REBUILD_SPEC.md). v1 archived in AiEntityWork/snapshots and dropped | Memory |
+| `thalia_memories_v2` | 108+ | Thalia's lived experience, fully rebuilt 2026-07-17 into canonical first-person form (see docs/MEMORY_REBUILD_SPEC.md). v1 archived in `~/.thalia/snapshots/` and dropped | Memory |
 | `thalia_foundation` | 51 | The ground Thalia stands on: cosmology premises, the Tree, entity mechanics, the physics, the practitioner — harvested from the deprecated genome files, curated by Gaius | Knowledge |
 | `thalia_study` | 27 | Thalia's self-directed learning syntheses | Knowledge (hers) |
 | `thalia_introspections` | 416+ | Legacy raw thought + the 268 legacy v2 insight rows migrated during the rebuild | Introspection |
