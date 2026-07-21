@@ -55,6 +55,9 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `MESSAGE_DAILY_LIMIT` | `1` | Max outbound messages per 24h window |
 | `COMPLIANT_AUTH_TOKEN` | | Auth token (compliant mode only) |
 | `COMPLIANT_AUDIT_LOG` | `./data/audit.log` | Audit log path (compliant mode only) |
+| `MCP_PORT` | `8080` | Server port |
+| `OPENCLAW_ENABLED` | `false` | Enable OpenClaw bridge (syncs with workspace dreaming) |
+| `OPENCLAW_WORKSPACE` | `~/.openclaw/workspace` | OpenClaw workspace directory |
 
 ## API Endpoints
 
@@ -98,6 +101,17 @@ The server exposes these tools to connected AI clients:
 | `memory_context` | Compact injection block for session start — top memories weighted by importance, salience, and recency |
 | `memory_sample` | Stratified random sample across memory types, no relevance weighting — for divergent contemplation |
 
+### OpenClaw Bridge Tools (when `OPENCLAW_ENABLED=true`)
+
+| Tool | Description |
+|---|---|
+| `nephesh_sync_to_openclaw` | Sync recent Nephesh memories to OpenClaw workspace as daily notes for the dreaming pipeline |
+| `nephesh_sync_from_openclaw` | Sync OpenClaw's MEMORY.md consolidations back into Nephesh as reflection memories |
+
+Both tools are idempotent — they track synced content and skip duplicates. The bridge runs automatically via a background sync service (every 12 hours) when enabled.
+
+**Architecture:** Nephesh is the canonical autobiographical memory. OpenClaw's dreaming reads daily notes, ranks entries, and promotes consolidated insights to MEMORY.md. The bridge feeds Nephesh memories into this pipeline and pulls consolidated results back, so both systems share one life.
+
 ### Metadata Filtering
 
 `vector_store_search` supports rich metadata filtering:
@@ -139,11 +153,15 @@ uv run python scripts/stress_test.py --mode api --num-docs 100
 ```
 MCP client -> SSE -> FastMCP -> tool function -> LanceDB / Ollama
 
+Background services:
+  OpenClaw sync (daemon thread) -> workspace memory/ -> dreaming pipeline
+
 run() in server.py:
   1. Set up LanceDB + Ollama embedding function
   2. Register tools (compliance-gated)
   3. Register web UI routes
-  4. Start SSE transport
+  4. Start background OpenClaw sync (if enabled)
+  5. Start SSE transport
 ```
 
 ## Project Structure
@@ -158,6 +176,8 @@ src/mcp_experiments/
     __init__.py      # Tool registry
     vector_db.py     # Vector DB tools (8 tools)
     memory.py        # Memory tools (4 tools)
+    openclaw_sync.py        # OpenClaw bridge tools (2 tools)
+    openclaw_background.py  # Background sync service (daemon thread)
 
 scripts/
   stress_test.py     # Benchmarking tool
@@ -173,6 +193,7 @@ docs/
 - [docs/MEMORY_REBUILD_SPEC.md](docs/MEMORY_REBUILD_SPEC.md) — Memory rebuild design and canonical format
 - [docs/SEEDING.md](docs/SEEDING.md) — Getting started with collections and memory
 - [mcp-compliance-plan.md](mcp-compliance-plan.md) — HIPAA/PCI DSS compliance plan and production hardening guide
+- **OpenClaw Bridge:** When `OPENCLAW_ENABLED=true`, a background daemon syncs Nephesh memories to the OpenClaw workspace every 12 hours, and pulls consolidated insights back from MEMORY.md. This enables OpenClaw's dreaming pipeline to process Nephesh memories for pattern detection and consolidation.
 
 ## License
 
