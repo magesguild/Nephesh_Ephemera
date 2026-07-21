@@ -42,6 +42,10 @@ def run() -> None:
     register_all(mcp)
     register_web_ui(mcp)
 
+    # Start background OpenClaw sync if enabled
+    from .tools.openclaw_background import start_background_sync
+    start_background_sync()
+
     print(
         f"MCP Experiments server starting in {settings.server_mode.value} mode",
         file=sys.stderr,
