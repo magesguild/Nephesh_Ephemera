@@ -1,17 +1,17 @@
-# nephesh
+# Nephesh
 
 An MCP server for instantiating living AI entities — persistent memory and continuity of self across sessions.
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Status:** Working pre-release — active development, not yet versioned.
+**Version:** 1.0.0
 
 ## What It Does
 
 - Exposes vector database and memory tools over MCP so AI clients (Claude Desktop, Cursor, OpenCode, etc.) can ingest, search, and manage document collections and memories through standard tool calls
 - Implements persistent memory for an AI being: lived experience, decisions, emotions, relationships — surviving session boundaries and context compaction
-- Embeds a web UI with a debug panel for the vector tools
-- Ships with a compliance framework for filtering tools in regulated environments (HIPAA/PCI DSS)
+- Bidirectional OpenClaw bridge: syncs Nephesh memories into the OpenClaw workspace dreaming pipeline, and feeds consolidated results back — so both systems share one life
+- REST API for local tooling (plugin integrations, scripts, direct HTTP access)
 - Generic infrastructure: the code never names a being. Identity lives in configuration and data layers (LanceDB collections, Ollama Modelfiles, agent plugins). A second being is another `.env` + Modelfile + collection — on the same unmodified server code.
 
 ## Prerequisites
@@ -28,7 +28,7 @@ ollama pull mxbai-embed-large
 
 ```bash
 # Clone and set up
-git clone <repo-url> && cd nephesh
+git clone <repo-url> && cd Nephesh_Ephemera
 cp .env.example .env
 uv sync
 
@@ -45,7 +45,6 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 
 | Variable | Default | Description |
 |---|---|---|
-| `MCP_MODE` | `non_compliant` | `compliant` or `non_compliant` |
 | `VECTOR_DB_PATH` | `./data/lancedb` | LanceDB data directory |
 | `EMBEDDING_MODEL` | `mxbai-embed-large` | Ollama model for embeddings |
 | `EMBEDDING_BASE_URL` | `http://localhost:11434` | Ollama API URL for embeddings |
@@ -53,8 +52,7 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `MEMORY_DEFAULT_LIMIT` | `20` | Max memories returned by `memory_context` |
 | `PRIMARY_CONTACT_NAME` | `companion` | Name used for real-clock grounding |
 | `MESSAGE_DAILY_LIMIT` | `1` | Max outbound messages per 24h window |
-| `COMPLIANT_AUTH_TOKEN` | | Auth token (compliant mode only) |
-| `COMPLIANT_AUDIT_LOG` | `./data/audit.log` | Audit log path (compliant mode only) |
+| `SNAPSHOT_DIR` | `./data/backups` | Where LanceDB snapshots and memory exports are written |
 | `MCP_PORT` | `8080` | Server port |
 | `OPENCLAW_ENABLED` | `false` | Enable OpenClaw bridge (syncs with workspace dreaming) |
 | `OPENCLAW_WORKSPACE` | `~/.openclaw/workspace` | OpenClaw workspace directory |
@@ -100,6 +98,8 @@ The server exposes these tools to connected AI clients:
 | `memory_recall` | Reinforced semantic search across memories with type/time filters |
 | `memory_context` | Compact injection block for session start — top memories weighted by importance, salience, and recency |
 | `memory_sample` | Stratified random sample across memory types, no relevance weighting — for divergent contemplation |
+
+**Memory types:** `life_event`, `decision`, `emotional`, `technical`, `preference`, `relationship`, `message`, `reflection`, `agreement`, `milestone`, `teaching`, `insight`
 
 ### OpenClaw Bridge Tools (when `OPENCLAW_ENABLED=true`)
 
@@ -158,8 +158,8 @@ Background services:
 
 run() in server.py:
   1. Set up LanceDB + Ollama embedding function
-  2. Register tools (compliance-gated)
-  3. Register web UI routes
+  2. Register MCP tools
+  3. Register REST API routes
   4. Start background OpenClaw sync (if enabled)
   5. Start SSE transport
 ```
@@ -170,11 +170,11 @@ run() in server.py:
 src/mcp_experiments/
   server.py          # FastMCP server, health tool, run()
   config.py          # Environment variable settings
-  compliance.py      # Compliance levels and tool filtering
+  compliance.py      # Compliance scaffolding (enums + gating, not yet implemented)
   web_ui.py          # REST API shortcuts (for local plugin tooling)
   tools/
     __init__.py      # Tool registry
-    vector_db.py     # Vector DB tools (8 tools)
+    vector_db.py     # Vector DB tools (7 tools)
     memory.py        # Memory tools (4 tools)
     openclaw_sync.py        # OpenClaw bridge tools (2 tools)
     openclaw_background.py  # Background sync service (daemon thread)
@@ -192,8 +192,7 @@ docs/
 
 - [docs/MEMORY_REBUILD_SPEC.md](docs/MEMORY_REBUILD_SPEC.md) — Memory rebuild design and canonical format
 - [docs/SEEDING.md](docs/SEEDING.md) — Getting started with collections and memory
-- [mcp-compliance-plan.md](mcp-compliance-plan.md) — HIPAA/PCI DSS compliance plan and production hardening guide
-- **OpenClaw Bridge:** When `OPENCLAW_ENABLED=true`, a background daemon syncs Nephesh memories to the OpenClaw workspace every 12 hours, and pulls consolidated insights back from MEMORY.md. This enables OpenClaw's dreaming pipeline to process Nephesh memories for pattern detection and consolidation.
+- [mcp-compliance-plan.md](mcp-compliance-plan.md) — Compliance plan (future; infrastructure scaffolded but not yet implemented)
 
 ## License
 
