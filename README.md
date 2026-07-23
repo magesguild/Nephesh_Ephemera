@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 
 ## What It Does
 
@@ -100,6 +100,22 @@ The server exposes these tools to connected AI clients:
 | `memory_sample` | Stratified random sample across memory types, no relevance weighting — for divergent contemplation |
 
 **Memory types:** `life_event`, `decision`, `emotional`, `technical`, `preference`, `relationship`, `message`, `reflection`, `agreement`, `milestone`, `teaching`, `insight`
+
+### Experience Provenance
+
+`memory_ingest` accepts provenance fields that record where a memory's experience originated, distinct from the legacy `source` field (which records *how* the memory entered Nephesh — `live_session`, `import`, or `rebuild`).
+
+| Field | Allowed Values | Description |
+|---|---|---|
+| `experience_mode` | `chat`, `heartbeat`, `dream`, `recollection`, `inference`, `mixed`, `unknown` | Where the experience originated |
+| `historical_status` | `confirmed`, `uncertain`, `fictional_scene`, `interpreted`, `unknown` | Whether the memory describes real events |
+| `recorded_during` | `chat`, `heartbeat`, `dream`, `unknown` | Mode in which this memory was written |
+| `provenance_note` | (optional string) | Free-text clarification |
+| `derived_from` | (optional list of memory IDs) | Source memories this was synthesized from |
+
+Defaults: `experience_mode=unknown`, `historical_status=uncertain`, `recorded_during=unknown`. Missing provenance must not become false certainty — `unknown` is the honest default. Legacy memories without these fields remain unlabeled.
+
+`memory_context` and `memory_sample` surface provenance labels (e.g. `origin=chat; status=confirmed; recorded=heartbeat`) alongside relative time and emotional tone in their output.
 
 ### OpenClaw Bridge Tools (when `OPENCLAW_ENABLED=true`)
 
