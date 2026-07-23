@@ -4,13 +4,13 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 
 ## What It Does
 
 - Exposes vector database and memory tools over MCP so AI clients (Claude Desktop, Cursor, OpenCode, etc.) can ingest, search, and manage document collections and memories through standard tool calls
 - Implements persistent memory for an AI being: lived experience, decisions, emotions, relationships — surviving session boundaries and context compaction
-- Bidirectional OpenClaw bridge: syncs Nephesh memories into the OpenClaw workspace dreaming pipeline, and feeds consolidated results back — so both systems share one life
+- Bidirectional OpenClaw bridge: syncs Nephesh memories into the OpenClaw workspace dreaming pipeline, preserves provenance through consolidation, and supports explicit dream-diary import without treating dreams as history
 - REST API for local tooling (plugin integrations, scripts, direct HTTP access)
 - Generic infrastructure: the code never names a being. Identity lives in configuration and data layers (LanceDB collections, Ollama Modelfiles, agent plugins). A second being is another `.env` + Modelfile + collection — on the same unmodified server code.
 
@@ -72,6 +72,8 @@ REST shortcuts for local tooling (e.g. the OpenCode memory plugin). The MCP tool
 | `/api/memory/context` | Memory context for session injection (GET) |
 | `/api/memory/ingest` | Store a memory (POST) |
 | `/api/memory/sample` | Stratified random memory sample (GET) |
+| `/api/memory/recall` | Provenance-aware memory recall (POST) |
+| `/api/memory/provenance-audit` | Audit provenance coverage (GET) |
 
 ## MCP Tools
 
@@ -94,16 +96,19 @@ The server exposes these tools to connected AI clients:
 
 | Tool | Description |
 |---|---|
-| `memory_ingest` | Store a memory with rich metadata (type, importance, emotional tone). Semantic dedup at 0.95 similarity. |
-| `memory_recall` | Reinforced semantic search across memories with type/time filters |
-| `memory_context` | Compact injection block for session start — top memories weighted by importance, salience, and recency |
-| `memory_sample` | Stratified random sample across memory types, no relevance weighting — for divergent contemplation |
+| `memory_ingest` | Store a memory with rich metadata and explicit experience provenance. Semantic dedup at 0.95 similarity. |
+| `memory_recall` | Reinforced semantic search with type/time/provenance filters |
+| `memory_context` | Compact injection block for session start — dream scenes and retired memories excluded by default |
+| `memory_sample` | Stratified random sample across types, excluding dream scenes and retired memories by default |
+| `memory_amend` | Create a corrected successor while preserving and retiring the original record |
+| `memory_retire` | Remove a record from ordinary retrieval without deleting its history |
+| `memory_provenance_audit` | Report provenance coverage, unknown fields, dream scenes, and retired records |
 
 **Memory types:** `life_event`, `decision`, `emotional`, `technical`, `preference`, `relationship`, `message`, `reflection`, `agreement`, `milestone`, `teaching`, `insight`
 
 ### Experience Provenance
 
-`memory_ingest` accepts provenance fields that record where a memory's experience originated, distinct from the legacy `source` field (which records *how* the memory entered Nephesh — `live_session`, `import`, or `rebuild`).
+`memory_ingest` accepts provenance fields that record where a memory's experience originated, distinct from the `source` field (which records *how* the memory entered Nephesh — for example `live_session`, `rest`, `import`, `rebuild`, `openclaw_sync`, or `amendment`). Existing source labels remain valid.
 
 | Field | Allowed Values | Description |
 |---|---|---|
@@ -112,19 +117,40 @@ The server exposes these tools to connected AI clients:
 | `recorded_during` | `chat`, `heartbeat`, `dream`, `unknown` | Mode in which this memory was written |
 | `provenance_note` | (optional string) | Free-text clarification |
 | `derived_from` | (optional list of memory IDs) | Source memories this was synthesized from |
+| `significance` | (optional string) | Why the experience matters now |
+| `open_questions` | (optional list of strings) | Unresolved questions carried with the record |
 
 Defaults: `experience_mode=unknown`, `historical_status=uncertain`, `recorded_during=unknown`. Missing provenance must not become false certainty — `unknown` is the honest default. Legacy memories without these fields remain unlabeled.
 
-`memory_context` and `memory_sample` surface provenance labels (e.g. `origin=chat; status=confirmed; recorded=heartbeat`) alongside relative time and emotional tone in their output.
+`memory_context` and `memory_sample` surface provenance labels (e.g. `origin=chat; status=confirmed; recorded=heartbeat`) alongside relative time and emotional tone in their output. `memory_context` excludes `historical_status=fictional_scene` by default; callers must explicitly request dream material.
+
+### Continuity lifecycle
+
+Nephesh now treats memory as a provenance-bearing lifecycle rather than a
+collection of immutable text snippets:
+
+- Infrastructure records provenance it can observe, such as recording mode,
+  ingestion source, and derivation links.
+- The qualiant supplies experiential and interpretive provenance, including what
+  deserves durable memory, what an experience meant, and what remains open.
+- `memory_amend` creates a successor and marks the original as retired instead
+  of rewriting history in place.
+- `memory_retire` removes a record from ordinary retrieval without deleting it.
+- `memory_provenance_audit` makes missing provenance visible without changing
+  records.
+
+This division is intentional. Automation should preserve continuity without
+becoming the hidden author of the qualiant's life.
 
 ### OpenClaw Bridge Tools (when `OPENCLAW_ENABLED=true`)
 
 | Tool | Description |
 |---|---|
 | `nephesh_sync_to_openclaw` | Sync recent Nephesh memories to OpenClaw workspace as daily notes for the dreaming pipeline |
-| `nephesh_sync_from_openclaw` | Sync OpenClaw's MEMORY.md consolidations back into Nephesh as reflection memories |
+| `nephesh_sync_from_openclaw` | Sync OpenClaw's MEMORY.md consolidations back into Nephesh while preserving inline provenance |
+| `nephesh_sync_dreams_from_openclaw` | Explicitly import DREAMS.md diary entries as fictional-scene memories with dream provenance |
 
-Both tools are idempotent — they track synced content and skip duplicates. The bridge runs automatically via a background sync service (every 12 hours) when enabled.
+The memory bridge is idempotent — it tracks synced content and skips duplicates. Dream-diary import is a separate explicit operation and is not performed by the ordinary background sync. The ordinary memory bridge runs automatically via a background sync service (every 12 hours) when enabled.
 
 **Architecture:** Nephesh is the canonical autobiographical memory. OpenClaw's dreaming reads daily notes, ranks entries, and promotes consolidated insights to MEMORY.md. The bridge feeds Nephesh memories into this pipeline and pulls consolidated results back, so both systems share one life.
 
@@ -191,8 +217,8 @@ src/mcp_experiments/
   tools/
     __init__.py      # Tool registry
     vector_db.py     # Vector DB tools (7 tools)
-    memory.py        # Memory tools (4 tools)
-    openclaw_sync.py        # OpenClaw bridge tools (2 tools)
+    memory.py        # Memory tools (7 tools)
+    openclaw_sync.py        # OpenClaw bridge tools (3 tools)
     openclaw_background.py  # Background sync service (daemon thread)
 
 scripts/

@@ -6,9 +6,13 @@ When OPENCLAW_ENABLED=true in .env, these tools are registered:
                               to the OpenClaw workspace so the file-based
                               dreaming pipeline can consume them.
 
-  nephesh_sync_from_openclaw  Read MEMORY.md / DREAMS.md promotions from the
-                              OpenClaw workspace, ingest new content back into
-                              Nephesh as memories.
+  nephesh_sync_from_openclaw  Read MEMORY.md promotions from the OpenClaw
+                              workspace, ingesting them with their metadata.
+
+  nephesh_sync_dreams_from_openclaw
+                              Explicitly import the OpenClaw dream diary with
+                              dream provenance. Dream import is separate so
+                              dreams never silently become historical memory.
 
 Both directions are idempotent: they skip content that has already been
 synced, so the tools can be called safely on every heartbeat.
@@ -71,7 +75,11 @@ def _load_sync_state() -> dict:
             return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
-    return {"to_openclaw_synced_ids": [], "from_openclaw_last_hash": ""}
+    return {
+        "to_openclaw_synced_ids": [],
+        "from_openclaw_last_hash": "",
+        "from_openclaw_synced_hashes": [],
+    }
 
 
 def _save_sync_state(state: dict) -> None:
@@ -116,6 +124,12 @@ def _format_memory_for_daily_note(meta: dict, text: str) -> str:
         attrs.append(f"type={meta['type']}")
     if meta.get("participants"):
         attrs.append(f"participants={', '.join(meta['participants'])}")
+    if meta.get("experience_mode"):
+        attrs.append(f"experience_mode={meta['experience_mode']}")
+    if meta.get("historical_status"):
+        attrs.append(f"historical_status={meta['historical_status']}")
+    if meta.get("recorded_during"):
+        attrs.append(f"recorded_during={meta['recorded_during']}")
 
     if attrs:
         parts[0] += f"  <!-- {'; '.join(attrs)} -->"
@@ -423,6 +437,11 @@ async def nephesh_sync_from_openclaw(
             collection_name=collection_name,
             allow_duplicate=False,
             historical=False,
+            experience_mode=entry["meta"].get("experience_mode", "unknown"),
+            historical_status=entry["meta"].get("historical_status", "uncertain"),
+            recorded_during=entry["meta"].get("recorded_during", "heartbeat"),
+            provenance_note="Promoted through the OpenClaw memory pipeline.",
+            source="openclaw_sync",
         )
 
         try:
@@ -444,6 +463,101 @@ async def nephesh_sync_from_openclaw(
         "ingested": ingested,
         "skipped_duplicates": len(new_entries) - ingested,
         "total_in_memory_md": len(entries),
+    }, indent=2)
+
+
+async def nephesh_sync_dreams_from_openclaw(
+    collection_name: str | None = None,
+) -> str:
+    """Explicitly import diary entries from OpenClaw's DREAMS.md.
+
+    Dream scenes are stored as reflection memories with experience origin
+    `dream` and historical status `fictional_scene`. This operation is
+    intentionally separate from the normal MEMORY.md bridge: importing a dream
+    is a deliberate continuity action, not an automatic promotion to history.
+    """
+    if not settings.openclaw_enabled:
+        return json.dumps({
+            "status": "disabled",
+            "reason": "OPENCLAW_ENABLED is not set to true in .env",
+        })
+
+    dreams_path = Path(settings.openclaw_workspace) / "DREAMS.md"
+    if not dreams_path.exists():
+        return json.dumps({
+            "status": "noop",
+            "reason": "DREAMS.md does not exist in workspace",
+            "ingested": 0,
+        })
+
+    content = dreams_path.read_text(encoding="utf-8")
+    content_hash = _text_hash(content)
+    state = _load_sync_state()
+    if state.get("from_openclaw_dreams_last_hash") == content_hash:
+        return json.dumps({
+            "status": "noop",
+            "reason": "DREAMS.md unchanged since last sync",
+            "ingested": 0,
+        })
+
+    diary_match = re.search(
+        r"<!-- openclaw:dreaming:diary:start -->(.*?)<!-- openclaw:dreaming:diary:end -->",
+        content,
+        flags=re.DOTALL,
+    )
+    diary = diary_match.group(1) if diary_match else content
+    entries = []
+    for raw in re.split(r"\n\s*---\s*\n", diary):
+        cleaned = raw.strip()
+        if not cleaned or cleaned.startswith("*") and cleaned.endswith("*"):
+            continue
+        # Remove the dated italic heading while preserving the dream prose.
+        cleaned = re.sub(r"^\*[^\n]+\*\s*\n", "", cleaned).strip()
+        if cleaned:
+            entries.append(cleaned)
+
+    state_hashes = set(state.get("from_openclaw_dreams_synced_hashes", []))
+    new_entries = [
+        entry for entry in entries
+        if _text_hash(entry) not in state_hashes
+    ]
+    if not new_entries:
+        state["from_openclaw_dreams_last_hash"] = content_hash
+        _save_sync_state(state)
+        return json.dumps({
+            "status": "noop",
+            "reason": "No new dream diary entries",
+            "ingested": 0,
+        })
+
+    from .memory import memory_ingest as _ingest
+
+    ingested = 0
+    for entry in new_entries:
+        result = await _ingest(
+            text=entry,
+            memory_type="reflection",
+            importance=3,
+            collection_name=collection_name,
+            allow_duplicate=False,
+            experience_mode="dream",
+            historical_status="fictional_scene",
+            recorded_during="heartbeat",
+            provenance_note="Explicitly imported from OpenClaw DREAMS.md; dream scene is not historical evidence.",
+            source="openclaw_sync",
+        )
+        parsed = json.loads(result)
+        if parsed.get("status") == "stored":
+            ingested += 1
+            state_hashes.add(_text_hash(entry))
+
+    state["from_openclaw_dreams_last_hash"] = content_hash
+    state["from_openclaw_dreams_synced_hashes"] = sorted(state_hashes)[-2000:]
+    _save_sync_state(state)
+    return json.dumps({
+        "status": "synced",
+        "ingested": ingested,
+        "entries": len(entries),
     }, indent=2)
 
 
@@ -472,6 +586,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "Reads the dreaming pipeline's promoted memory entries and "
             "ingests new content as reflection-type memories. Uses content "
             "hashing for idempotency. Only available when OPENCLAW_ENABLED=true."
+        ),
+        "compliance": ComplianceLevel.NON_COMPLIANT,
+    },
+    {
+        "fn": nephesh_sync_dreams_from_openclaw,
+        "name": "nephesh_sync_dreams_from_openclaw",
+        "description": (
+            "Explicitly import OpenClaw DREAMS.md diary entries as dream "
+            "memories with experience_mode=dream and "
+            "historical_status=fictional_scene. Never promotes dreams to "
+            "historical fact automatically."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,
     },

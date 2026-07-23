@@ -94,6 +94,9 @@ def register_web_ui(mcp) -> None:
                 recorded_during=body.get("recorded_during", "unknown"),
                 provenance_note=body.get("provenance_note"),
                 derived_from=body.get("derived_from"),
+                significance=body.get("significance"),
+                open_questions=body.get("open_questions"),
+                source=body.get("source", "rest"),
             )))
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -105,6 +108,37 @@ def register_web_ui(mcp) -> None:
             collection = request.query_params.get("collection")
             return JSONResponse(json.loads(await memory.memory_sample(
                 n=int(n) if n else 8,
+                include_dreams=request.query_params.get("include_dreams", "false").lower() == "true",
+                include_retired=request.query_params.get("include_retired", "false").lower() == "true",
+                collection_name=collection,
+            )))
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @mcp.custom_route("/api/memory/recall", methods=["POST"])
+    async def api_memory_recall(request):
+        try:
+            body = await request.json()
+            return JSONResponse(json.loads(await memory.memory_recall(
+                query=body.get("query", ""),
+                memory_type=body.get("memory_type"),
+                n_results=body.get("n_results", 10),
+                time_start=body.get("time_start"),
+                time_end=body.get("time_end"),
+                experience_mode=body.get("experience_mode"),
+                historical_status=body.get("historical_status"),
+                recorded_during=body.get("recorded_during"),
+                include_retired=body.get("include_retired", False),
+                collection_name=body.get("collection_name"),
+            )))
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @mcp.custom_route("/api/memory/provenance-audit", methods=["GET"])
+    async def api_memory_provenance_audit(request):
+        try:
+            collection = request.query_params.get("collection")
+            return JSONResponse(json.loads(await memory.memory_provenance_audit(
                 collection_name=collection,
             )))
         except Exception as e:
@@ -120,6 +154,8 @@ def register_web_ui(mcp) -> None:
             collection = request.query_params.get("collection")
             return JSONResponse(json.loads(await memory.memory_context(
                 limit=int(limit) if limit else None,
+                include_dreams=request.query_params.get("include_dreams", "false").lower() == "true",
+                include_retired=request.query_params.get("include_retired", "false").lower() == "true",
                 collection_name=collection,
             )))
         except Exception as e:

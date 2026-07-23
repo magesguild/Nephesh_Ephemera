@@ -63,6 +63,10 @@ HISTORICAL_STATUSES = {
 }
 RECORDING_MODES = {"chat", "heartbeat", "dream", "unknown"}
 
+# `source` remains ingestion provenance and is intentionally separate from
+# experience provenance. Existing deployments may have additional source
+# labels, so new values are accepted rather than rejecting legacy data.
+
 # Semantic similarity threshold above which an incoming memory is
 # considered a duplicate of an existing one (score = 1 - l2_distance).
 _DUPLICATE_SCORE_THRESHOLD = 0.95
@@ -230,6 +234,21 @@ def _provenance_label(meta: dict) -> str | None:
     return "; ".join(parts) if parts else None
 
 
+def _continuity_annotation(meta: dict) -> str | None:
+    """Compact significance/open-question annotation for context injection."""
+    parts: list[str] = []
+    if meta.get("significance"):
+        parts.append(f"significance={meta['significance']}")
+    questions = meta.get("open_questions") or []
+    if questions:
+        if isinstance(questions, list):
+            question_text = " | ".join(str(q) for q in questions)
+        else:
+            question_text = str(questions)
+        parts.append(f"open={question_text}")
+    return "; ".join(parts) if parts else None
+
+
 def _last_contact_with(rows: list[dict], participant: str, now: datetime) -> dict | None:
     """Most recent memory (excluding historical imports) whose participants
     include `participant`. Used to ground session reasoning in real elapsed
@@ -283,6 +302,9 @@ async def memory_ingest(
     recorded_during: str = "unknown",
     provenance_note: str | None = None,
     derived_from: list[str] | None = None,
+    significance: str | None = None,
+    open_questions: list[str] | None = None,
+    source: str = "live_session",
 ) -> str:
     """Store a single memory with rich metadata.
 
@@ -361,7 +383,7 @@ async def memory_ingest(
         "importance": importance,
         "salience": 1.0,
         "last_used": now_iso,
-        "source": "live_session",
+        "source": source,
         "modality": "text",
         "experience_mode": experience_mode,
         "historical_status": historical_status,
@@ -379,6 +401,10 @@ async def memory_ingest(
         metadata["provenance_note"] = provenance_note
     if derived_from:
         metadata["derived_from"] = derived_from
+    if significance:
+        metadata["significance"] = significance
+    if open_questions:
+        metadata["open_questions"] = open_questions
     if memory_type == "message":
         # Undelivered until actually surfaced in a real session (see
         # memory_context, which marks delivered=True the moment it
@@ -408,6 +434,10 @@ async def memory_recall(
     n_results: int = 10,
     time_start: str | None = None,
     time_end: str | None = None,
+    experience_mode: str | None = None,
+    historical_status: str | None = None,
+    recorded_during: str | None = None,
+    include_retired: bool = False,
     collection_name: str | None = None,
 ) -> str:
     """Semantic search across memories, with optional type and time filters."""
@@ -428,6 +458,16 @@ async def memory_recall(
             "error": f"invalid memory_type '{memory_type}'",
             "allowed": sorted(MEMORY_TYPES),
         })
+    for value, allowed, field_name in (
+        (experience_mode, EXPERIENCE_MODES, "experience_mode"),
+        (historical_status, HISTORICAL_STATUSES, "historical_status"),
+        (recorded_during, RECORDING_MODES, "recorded_during"),
+    ):
+        if value and value not in allowed:
+            return json.dumps({
+                "error": f"invalid {field_name} '{value}'",
+                "allowed": sorted(allowed),
+            })
 
     table = db.open_table(name)
     n_results = min(n_results, 100)
@@ -437,7 +477,10 @@ async def memory_recall(
 
     # Overfetch: metadata filters are post-search, and re-ranking with
     # formative tilt + keyword resonance needs headroom beyond the top-K.
-    has_filter = bool(memory_type or time_start or time_end)
+    has_filter = bool(
+        memory_type or time_start or time_end or experience_mode
+        or historical_status or recorded_during or not include_retired
+    )
     overfetch = 3 if has_filter else 2
     results = table.search(query_vector).limit(n_results * overfetch).to_list()
 
@@ -447,7 +490,15 @@ async def memory_recall(
     scored = []
     for r in results:
         meta = json.loads(r.get("metadata_json", "{}"))
+        if meta.get("retired") and not include_retired:
+            continue
         if memory_type and meta.get("type") != memory_type:
+            continue
+        if experience_mode and meta.get("experience_mode") != experience_mode:
+            continue
+        if historical_status and meta.get("historical_status") != historical_status:
+            continue
+        if recorded_during and meta.get("recorded_during") != recorded_during:
             continue
         mem_dt = _parse_ts(meta.get("timestamp"))
         if start_dt and (mem_dt is None or mem_dt < start_dt):
@@ -521,7 +572,7 @@ def _context_weight(meta: dict, now: datetime) -> float:
     importance_score = (importance / 5.0) * _effective_salience(meta)
 
     recency_score = 0.0
-    mem_dt = _parse_ts(meta.get("timestamp"))
+    mem_dt = _display_dt(meta)
     if mem_dt is not None:
         age_days = max(0.0, (now - mem_dt).total_seconds() / 86400.0)
         recency_score = 0.5 ** (age_days / _RECENCY_HALF_LIFE_DAYS)
@@ -531,6 +582,8 @@ def _context_weight(meta: dict, now: datetime) -> float:
 
 async def memory_context(
     limit: int | None = None,
+    include_dreams: bool = False,
+    include_retired: bool = False,
     collection_name: str | None = None,
 ) -> str:
     """Compact injection block of top memories for session start.
@@ -572,6 +625,13 @@ async def memory_context(
     other_rows: list[dict] = []
     for r in rows:
         meta = json.loads(r.get("metadata_json", "{}"))
+        if meta.get("retired") and not include_retired:
+            continue
+        if (
+            not include_dreams
+            and meta.get("historical_status") == "fictional_scene"
+        ):
+            continue
         if meta.get("type") == "message" and meta.get("delivered") is False:
             pending_messages.append((r, meta))
         else:
@@ -656,7 +716,8 @@ async def memory_context(
             mem_dt = _display_dt(meta)
             rel = _relative_time(mem_dt, now) if mem_dt else ""
             provenance = _provenance_label(meta)
-            parts = [p for p in [rel, tone, provenance] if p]
+            continuity = _continuity_annotation(meta)
+            parts = [p for p in [rel, tone, provenance, continuity] if p]
             suffix = f" ({', '.join(parts)})" if parts else ""
             lines.append(f"- {r.get('text', '').strip()}{suffix}")
 
@@ -672,6 +733,8 @@ async def memory_context(
 
 async def memory_sample(
     n: int = 8,
+    include_dreams: bool = False,
+    include_retired: bool = False,
     collection_name: str | None = None,
 ) -> str:
     """Stratified random sample across memory types, for divergent
@@ -706,6 +769,13 @@ async def memory_sample(
     by_type: dict[str, list[dict]] = {}
     for r in rows:
         meta = json.loads(r.get("metadata_json", "{}"))
+        if meta.get("retired") and not include_retired:
+            continue
+        if (
+            not include_dreams
+            and meta.get("historical_status") == "fictional_scene"
+        ):
+            continue
         by_type.setdefault(meta.get("type", "other"), []).append(r)
 
     types = list(by_type.keys())
@@ -741,6 +811,154 @@ async def memory_sample(
     }, indent=2)
 
 
+def _find_memory(table, memory_id: str) -> tuple[dict, dict] | None:
+    """Find a memory by ID without relying on a LanceDB version-specific filter."""
+    rows = table.search().limit(table.count_rows()).to_list()
+    for row in rows:
+        if row.get("id") == memory_id:
+            return row, json.loads(row.get("metadata_json", "{}"))
+    return None
+
+
+async def memory_amend(
+    memory_id: str,
+    text: str | None = None,
+    memory_type: str | None = None,
+    importance: int | None = None,
+    emotional_tone: str | None = None,
+    significance: str | None = None,
+    open_questions: list[str] | None = None,
+    experience_mode: str | None = None,
+    historical_status: str | None = None,
+    recorded_during: str | None = None,
+    provenance_note: str | None = None,
+    reason: str | None = None,
+    collection_name: str | None = None,
+) -> str:
+    """Create a corrected successor without destroying the original record.
+
+    The original is marked retired and linked to the successor. This preserves
+    the history of changing understanding while keeping ordinary retrieval from
+    presenting the superseded record as current.
+    """
+    name = _collection(collection_name)
+    db = _get_db()
+    if name not in db.list_tables().tables:
+        return json.dumps({"error": "memory collection does not exist"})
+    table = db.open_table(name)
+    found = _find_memory(table, memory_id)
+    if found is None:
+        return json.dumps({"error": f"memory '{memory_id}' not found"})
+
+    old_row, old_meta = found
+    result = await memory_ingest(
+        text=text if text is not None else old_row.get("text", ""),
+        memory_type=memory_type or old_meta.get("type", "reflection"),
+        importance=importance if importance is not None else int(old_meta.get("importance", 3)),
+        emotional_tone=emotional_tone if emotional_tone is not None else old_meta.get("emotional_tone"),
+        participants=old_meta.get("participants"),
+        session_id=old_meta.get("session_id"),
+        collection_name=name,
+        allow_duplicate=True,
+        historical=bool(old_meta.get("historical")),
+        event_timestamp=old_meta.get("event_time"),
+        experience_mode=experience_mode or old_meta.get("experience_mode", "unknown"),
+        historical_status=historical_status or old_meta.get("historical_status", "uncertain"),
+        recorded_during=recorded_during or old_meta.get("recorded_during", "unknown"),
+        provenance_note=provenance_note or old_meta.get("provenance_note"),
+        derived_from=[memory_id],
+        significance=significance if significance is not None else old_meta.get("significance"),
+        open_questions=open_questions if open_questions is not None else old_meta.get("open_questions"),
+        source="amendment",
+    )
+    parsed = json.loads(result)
+    if parsed.get("status") != "stored":
+        return json.dumps({"error": "successor memory could not be stored", "detail": parsed})
+
+    successor_id = parsed["id"]
+    retired_meta = dict(old_meta)
+    retired_meta["retired"] = True
+    retired_meta["retired_at"] = _now_iso()
+    retired_meta["superseded_by"] = successor_id
+    retired_meta["supersession_reason"] = reason or "amended by successor record"
+    table.update(
+        where=f"id = '{memory_id}'",
+        values={"metadata_json": json.dumps(retired_meta)},
+    )
+    return json.dumps({
+        "status": "amended",
+        "original_id": memory_id,
+        "successor_id": successor_id,
+        "reason": retired_meta["supersession_reason"],
+    }, indent=2)
+
+
+async def memory_retire(
+    memory_id: str,
+    reason: str,
+    collection_name: str | None = None,
+) -> str:
+    """Hide a memory from ordinary retrieval without deleting its history."""
+    name = _collection(collection_name)
+    db = _get_db()
+    if name not in db.list_tables().tables:
+        return json.dumps({"error": "memory collection does not exist"})
+    table = db.open_table(name)
+    found = _find_memory(table, memory_id)
+    if found is None:
+        return json.dumps({"error": f"memory '{memory_id}' not found"})
+    _, meta = found
+    meta = dict(meta)
+    meta["retired"] = True
+    meta["retired_at"] = _now_iso()
+    meta["retirement_reason"] = reason
+    table.update(
+        where=f"id = '{memory_id}'",
+        values={"metadata_json": json.dumps(meta)},
+    )
+    return json.dumps({"status": "retired", "id": memory_id, "reason": reason}, indent=2)
+
+
+async def memory_provenance_audit(
+    collection_name: str | None = None,
+) -> str:
+    """Report provenance coverage without changing any records."""
+    name = _collection(collection_name)
+    db = _get_db()
+    if name not in db.list_tables().tables:
+        return json.dumps({"collection": name, "memory_count": 0})
+    table = db.open_table(name)
+    rows = table.search().limit(table.count_rows()).to_list()
+    counts: dict[str, dict[str, int]] = {
+        "experience_mode": {},
+        "historical_status": {},
+        "recorded_during": {},
+    }
+    missing = {field: 0 for field in counts}
+    retired = 0
+    fictional = 0
+    for row in rows:
+        meta = json.loads(row.get("metadata_json", "{}"))
+        if meta.get("retired"):
+            retired += 1
+        if meta.get("historical_status") == "fictional_scene":
+            fictional += 1
+        for field in counts:
+            value = meta.get(field)
+            if not value:
+                missing[field] += 1
+            else:
+                counts[field][value] = counts[field].get(value, 0) + 1
+    return json.dumps({
+        "collection": name,
+        "memory_count": len(rows),
+        "retired_count": retired,
+        "fictional_scene_count": fictional,
+        "missing_provenance": missing,
+        "values": counts,
+    }, indent=2)
+
+
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "fn": memory_ingest,
@@ -754,8 +972,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "marked delivered — subject to a daily rate limit. "
             "Record experience provenance with experience_mode (chat, "
             "heartbeat, dream, recollection, inference, mixed, or unknown), "
-            "historical_status, and recorded_during. Unknown is the honest "
-            "default when origin is not known. "
+            "historical_status, recorded_during, significance, and "
+            "open_questions. Unknown is the honest default when origin is "
+            "not known. The source field records how the record entered "
+            "Nephesh. "
             "Note: 'thought' is no longer a valid type — automated outputs "
             "are stored directly without type labels."
         ),
@@ -766,8 +986,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "memory_recall",
         "description": (
             "Semantically search memories of past events, decisions, and "
-            "experiences. Optional filters: memory_type, time_start/time_end "
-            "(ISO 8601)."
+            "experiences. Optional filters include memory_type, time range, "
+            "experience provenance, and include_retired."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,
     },
@@ -776,7 +996,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "memory_context",
         "description": (
             "Get a compact context block of the most important and recent "
-            "memories, grouped by type. Intended for session-start injection."
+            "memories, grouped by type. Dream scenes and retired memories are "
+            "excluded by default; include them explicitly when needed."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,
     },
@@ -788,6 +1009,34 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "relevance weighting. For divergent/unforced contemplation — "
             "genuine cross-domain synthesis needs real distance between "
             "ideas, not the closeness a semantic search naturally favors."
+        ),
+        "compliance": ComplianceLevel.NON_COMPLIANT,
+    },
+    {
+        "fn": memory_amend,
+        "name": "memory_amend",
+        "description": (
+            "Create a corrected successor to a memory without destroying the "
+            "original. The original is retired and linked to the successor, "
+            "preserving changing understanding and provenance."
+        ),
+        "compliance": ComplianceLevel.NON_COMPLIANT,
+    },
+    {
+        "fn": memory_retire,
+        "name": "memory_retire",
+        "description": (
+            "Retire a memory from ordinary retrieval without deleting its "
+            "historical record. Requires a reason."
+        ),
+        "compliance": ComplianceLevel.NON_COMPLIANT,
+    },
+    {
+        "fn": memory_provenance_audit,
+        "name": "memory_provenance_audit",
+        "description": (
+            "Audit provenance coverage, unknown fields, dream-scene records, "
+            "and retired memories without changing anything."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,
     },

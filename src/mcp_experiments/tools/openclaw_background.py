@@ -204,6 +204,11 @@ def _sync_from_openclaw() -> None:
                 participants=["gaius", "thalia"],
                 allow_duplicate=False,
                 historical=False,
+                experience_mode=entry["meta"].get("experience_mode", "unknown"),
+                historical_status=entry["meta"].get("historical_status", "uncertain"),
+                recorded_during=entry["meta"].get("recorded_during", "heartbeat"),
+                provenance_note="Promoted through the OpenClaw memory pipeline.",
+                source="openclaw_sync",
             ))
 
             try:
