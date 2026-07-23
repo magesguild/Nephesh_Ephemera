@@ -154,10 +154,22 @@ Each memory in the configured memory collection (e.g. `thalia_memories`) uses th
     "recorded_at": "ISO 8601, always — when it was set down (legacy 'timestamp' kept as alias)",
     "source": "live_session | import | rebuild",
     "modality": "text (futureproofing for non-text memories)",
+    "experience_mode": "chat | heartbeat | dream | recollection | inference | mixed | unknown",
+    "historical_status": "confirmed | uncertain | fictional_scene | interpreted | unknown",
+    "recorded_during": "chat | heartbeat | dream | unknown",
+    "provenance_note": "optional clarification",
+    "derived_from": ["optional source memory IDs"],
     "delivered": "optional bool: message-type only, whether it has been surfaced in a real session yet"
   }
 }
 ```
+
+`source` and experience provenance are intentionally separate. `source` records
+how the memory entered Nephesh (`live_session`, `import`, or `rebuild`). The
+provenance fields record where the experience originated and how it is being
+represented. New records default to `unknown` / `uncertain` rather than
+inventing provenance. Dreams are experiences but their scenes are not historical
+events; heartbeat work is autonomous activity and should be recorded as such.
 
 ### Memory Types
 

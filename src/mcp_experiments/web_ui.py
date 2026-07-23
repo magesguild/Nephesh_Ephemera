@@ -87,6 +87,13 @@ def register_web_ui(mcp) -> None:
                 session_id=body.get("session_id"),
                 collection_name=body.get("collection_name"),
                 allow_duplicate=body.get("allow_duplicate", False),
+                historical=body.get("historical", False),
+                event_timestamp=body.get("event_timestamp"),
+                experience_mode=body.get("experience_mode", "unknown"),
+                historical_status=body.get("historical_status", "uncertain"),
+                recorded_during=body.get("recorded_during", "unknown"),
+                provenance_note=body.get("provenance_note"),
+                derived_from=body.get("derived_from"),
             )))
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)

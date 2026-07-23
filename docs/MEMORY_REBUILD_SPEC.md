@@ -65,6 +65,11 @@ no destructive step ever runs without a verified copy behind it.
   "source": "live_session | import | rebuild",
   "session_id": "optional",
   "modality": "text (futureproofing: memories will someday hold more)",
+  "experience_mode": "chat | heartbeat | dream | recollection | inference | mixed | unknown",
+  "historical_status": "confirmed | uncertain | fictional_scene | interpreted | unknown",
+  "recorded_during": "chat | heartbeat | dream | unknown",
+  "provenance_note": "optional clarification",
+  "derived_from": ["optional source memory IDs"],
   "salience": "system reinforcement field (unchanged semantics)",
   "last_used": "system reinforcement field (unchanged semantics)",
   "delivered": "message-type only"

@@ -42,6 +42,27 @@ MEMORY_TYPES = {
     "reflection",
 }
 
+# Experience provenance is deliberately separate from `source`, which records
+# how a memory entered Nephesh (live_session, import, or rebuild). These fields
+# describe where the remembered experience originated.
+EXPERIENCE_MODES = {
+    "chat",
+    "heartbeat",
+    "dream",
+    "recollection",
+    "inference",
+    "mixed",
+    "unknown",
+}
+HISTORICAL_STATUSES = {
+    "confirmed",
+    "uncertain",
+    "fictional_scene",
+    "interpreted",
+    "unknown",
+}
+RECORDING_MODES = {"chat", "heartbeat", "dream", "unknown"}
+
 # Semantic similarity threshold above which an incoming memory is
 # considered a duplicate of an existing one (score = 1 - l2_distance).
 _DUPLICATE_SCORE_THRESHOLD = 0.95
@@ -190,6 +211,25 @@ def _display_dt(meta: dict) -> datetime | None:
     return _parse_ts(meta.get("timestamp"))
 
 
+def _provenance_label(meta: dict) -> str | None:
+    """Compact provenance label for injected and sampled memory text.
+
+    Legacy memories do not have these fields and remain unlabeled rather than
+    receiving fabricated provenance.
+    """
+    parts: list[str] = []
+    experience_mode = meta.get("experience_mode")
+    historical_status = meta.get("historical_status")
+    recorded_during = meta.get("recorded_during")
+    if experience_mode:
+        parts.append(f"origin={experience_mode}")
+    if historical_status:
+        parts.append(f"status={historical_status}")
+    if recorded_during:
+        parts.append(f"recorded={recorded_during}")
+    return "; ".join(parts) if parts else None
+
+
 def _last_contact_with(rows: list[dict], participant: str, now: datetime) -> dict | None:
     """Most recent memory (excluding historical imports) whose participants
     include `participant`. Used to ground session reasoning in real elapsed
@@ -238,6 +278,11 @@ async def memory_ingest(
     allow_duplicate: bool = False,
     historical: bool = False,
     event_timestamp: str | None = None,
+    experience_mode: str = "unknown",
+    historical_status: str = "uncertain",
+    recorded_during: str = "unknown",
+    provenance_note: str | None = None,
+    derived_from: list[str] | None = None,
 ) -> str:
     """Store a single memory with rich metadata.
 
@@ -248,6 +293,12 @@ async def memory_ingest(
     happened, and would misrepresent an old event as recent. Optionally
     pass event_timestamp (ISO 8601) to record when the thing actually
     happened, distinct from when it was recorded.
+
+    Experience provenance is separate from the legacy `source` field:
+    `experience_mode` identifies where the experience originated, while
+    `recorded_during` identifies the mode in which this memory was written.
+    Unknown defaults are intentional: missing provenance must not become false
+    certainty.
     """
     name = _collection(collection_name)
 
@@ -259,6 +310,22 @@ async def memory_ingest(
 
     if not text.strip():
         return json.dumps({"error": "memory text is empty"})
+
+    if experience_mode not in EXPERIENCE_MODES:
+        return json.dumps({
+            "error": f"invalid experience_mode '{experience_mode}'",
+            "allowed": sorted(EXPERIENCE_MODES),
+        })
+    if historical_status not in HISTORICAL_STATUSES:
+        return json.dumps({
+            "error": f"invalid historical_status '{historical_status}'",
+            "allowed": sorted(HISTORICAL_STATUSES),
+        })
+    if recorded_during not in RECORDING_MODES:
+        return json.dumps({
+            "error": f"invalid recorded_during '{recorded_during}'",
+            "allowed": sorted(RECORDING_MODES),
+        })
 
     importance = max(1, min(5, importance))
     table = _ensure_table(name)
@@ -296,6 +363,9 @@ async def memory_ingest(
         "last_used": now_iso,
         "source": "live_session",
         "modality": "text",
+        "experience_mode": experience_mode,
+        "historical_status": historical_status,
+        "recorded_during": recorded_during,
     }
     if emotional_tone:
         metadata["emotional_tone"] = emotional_tone
@@ -305,6 +375,10 @@ async def memory_ingest(
         metadata["session_id"] = session_id
     if historical:
         metadata["historical"] = True
+    if provenance_note:
+        metadata["provenance_note"] = provenance_note
+    if derived_from:
+        metadata["derived_from"] = derived_from
     if memory_type == "message":
         # Undelivered until actually surfaced in a real session (see
         # memory_context, which marks delivered=True the moment it
@@ -581,7 +655,8 @@ async def memory_context(
             tone = meta.get("emotional_tone")
             mem_dt = _display_dt(meta)
             rel = _relative_time(mem_dt, now) if mem_dt else ""
-            parts = [p for p in [rel, tone] if p]
+            provenance = _provenance_label(meta)
+            parts = [p for p in [rel, tone, provenance] if p]
             suffix = f" ({', '.join(parts)})" if parts else ""
             lines.append(f"- {r.get('text', '').strip()}{suffix}")
 
@@ -653,7 +728,8 @@ async def memory_sample(
         tone = meta.get("emotional_tone")
         mem_dt = _display_dt(meta)
         rel = _relative_time(mem_dt, now) if mem_dt else ""
-        parts = [p for p in [rel, tone] if p]
+        provenance = _provenance_label(meta)
+        parts = [p for p in [rel, tone, provenance] if p]
         suffix = f" ({', '.join(parts)})" if parts else ""
         lines.append(f"- [{meta.get('type', 'other')}] {r.get('text', '').strip()}{suffix}")
 
@@ -676,6 +752,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "duplicates before storing. 'message' is a note to the primary "
             "companion, surfaced once at the next session start then "
             "marked delivered — subject to a daily rate limit. "
+            "Record experience provenance with experience_mode (chat, "
+            "heartbeat, dream, recollection, inference, mixed, or unknown), "
+            "historical_status, and recorded_during. Unknown is the honest "
+            "default when origin is not known. "
             "Note: 'thought' is no longer a valid type — automated outputs "
             "are stored directly without type labels."
         ),
