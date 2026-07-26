@@ -1,8 +1,10 @@
 # Nephesh TTS MVP
 
 The TTS integration is an optional, isolated StyleTTS2 worker. The main
-Nephesh process talks to `worker.py` over newline-delimited JSON so the large
-PyTorch/StyleTTS2 dependency graph stays out of the memory server's virtualenv.
+Nephesh process starts one disposable worker per request and talks to
+`worker.py` over newline-delimited JSON, so the large PyTorch/StyleTTS2
+dependency graph stays out of the memory server's virtualenv and its CUDA
+context cannot linger between requests.
 
 ## Setup
 
@@ -26,8 +28,8 @@ outside the voice directory.
 ## Tools
 
 - `tts_list_voices` — list the curated feminine catalog and active voice;
-- `tts_set_voice` — load and switch a voice without restarting Nephesh;
-- `tts_voice_info` — inspect the active voice and cached style embedding;
+- `tts_set_voice` — select a voice without loading the model;
+- `tts_voice_info` — inspect the selected feminine voice;
 - `tts_speak` — synthesize and play a WAV supplied through stdin to `aplay`.
 
 `tts_speak` accepts `speed` (`0.5..2.0`), `style_weight` (`0..1`), and
@@ -40,9 +42,9 @@ worker.
 - TTS registration is opt-in with `TTS_ENABLED`.
 - Model checkpoints, voice references, and deployment configuration stay
   outside the repository.
-- The worker is lazy: model loading occurs when needed, and the model plus
-  cached styles are released after every synthesis so CUDA VRAM does not remain
-  occupied between spoken passages.
+- The worker is one-shot: every request gets a new process, and the process
+  exits after its response. This fully releases the model, CUDA allocations,
+  and CUDA context after synthesis.
 - StyleTTS2 0.1.6 needs two compatibility shims in the worker for modern
   LangChain import paths and PyTorch 2.6 checkpoint loading; they do not affect
   Nephesh's main process.

@@ -1,7 +1,7 @@
-"""Persistent StyleTTS2 worker used by the Nephesh MCP tool boundary.
+"""One-shot StyleTTS2 worker used by the Nephesh MCP tool boundary.
 
 The worker owns the heavyweight model and keeps all synthesized audio in
-memory.  It communicates with the main server over newline-delimited JSON.
+memory. It handles one request and exits so its CUDA context is reclaimed.
 """
 from __future__ import annotations
 
@@ -130,12 +130,16 @@ class Worker:
         if action == "list":
             return {"ok": True, "voices": list(self.voices.values()), "active_voice": self.active_voice}
         if action == "info":
-            if not self.active_voice:
+            voice_id = str(request.get("voice_id") or self.active_voice or "").strip()
+            if not voice_id:
                 return {"ok": True, "voice": None}
-            return {"ok": True, "voice": self.voices[self.active_voice], "loaded": self.active_voice in self.styles}
+            if voice_id not in self.voices:
+                raise RuntimeError(f"unknown feminine voice: {voice_id}")
+            return {"ok": True, "voice": self.voices[voice_id], "loaded": False}
         if action == "set":
             voice_id = str(request.get("voice_id", "")).strip()
-            self._style(voice_id)
+            if voice_id not in self.voices:
+                raise RuntimeError(f"unknown feminine voice: {voice_id}")
             self.active_voice = voice_id
             return {"ok": True, "active_voice": voice_id, "voice": self.voices[voice_id]}
         if action == "speak":
@@ -177,15 +181,17 @@ class Worker:
 
 def main() -> None:
     worker = Worker()
-    for line in sys.stdin:
-        try:
-            # Third-party model code prints diagnostics and phonemes.  Keep
-            # stdout strictly JSONL so the Nephesh client cannot lose framing.
-            with redirect_stdout(sys.stderr):
-                result = worker.handle(json.loads(line))
-        except Exception as exc:  # worker boundary must remain alive after one bad request
-            result = _error(str(exc))
-        print(json.dumps(result), flush=True)
+    line = sys.stdin.readline()
+    if not line:
+        return
+    try:
+        # Third-party model code prints diagnostics and phonemes. Keep stdout
+        # strictly JSONL so the Nephesh client cannot lose framing.
+        with redirect_stdout(sys.stderr):
+            result = worker.handle(json.loads(line))
+    except Exception as exc:
+        result = _error(str(exc))
+    print(json.dumps(result), flush=True)
 
 
 if __name__ == "__main__":
