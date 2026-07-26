@@ -10,6 +10,11 @@ from . import memory, vector_db
 
 _TOOL_MODULES = [vector_db, memory]
 
+if settings.tts_enabled:
+    from . import tts
+
+    _TOOL_MODULES.append(tts)
+
 # Conditionally register OpenClaw bridge tools when enabled.
 if settings.openclaw_enabled:
     from . import openclaw_sync

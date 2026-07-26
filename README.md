@@ -56,6 +56,12 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `MCP_PORT` | `8080` | Server port |
 | `OPENCLAW_ENABLED` | `false` | Enable OpenClaw bridge (syncs with workspace dreaming) |
 | `OPENCLAW_WORKSPACE` | `~/.openclaw/workspace` | OpenClaw workspace directory |
+| `TTS_ENABLED` | `false` | Register the isolated StyleTTS2 speech tools |
+| `TTS_PYTHON` | `plugins/tts/.venv/bin/python` | Python interpreter for the TTS worker |
+| `TTS_VOICE_DIR` | `~/.nephesh/tts/voices` | External feminine voice metadata and reference audio |
+| `TTS_MODEL_CHECKPOINT` | unset | External StyleTTS2 checkpoint path |
+| `TTS_MODEL_CONFIG` | unset | External StyleTTS2 model config path |
+| `TTS_PLAYBACK_COMMAND` | `aplay` | Command receiving an ephemeral WAV on stdin |
 
 ## API Endpoints
 
@@ -118,6 +124,28 @@ The server exposes these tools to connected AI clients:
 | `provenance_note` | (optional string) | Free-text clarification |
 | `derived_from` | (optional list of memory IDs) | Source memories this was synthesized from |
 | `significance` | (optional string) | Why the experience matters now |
+
+### Optional TTS
+
+Nephesh can register an isolated StyleTTS2 worker without adding its heavy ML
+dependencies to the main server environment. Enable it only for the intended
+deployment and keep checkpoints, reference audio, and voice metadata outside
+the repository:
+
+```dotenv
+TTS_ENABLED=true
+TTS_PYTHON=/path/to/Nephesh_Ephemera/plugins/tts/.venv/bin/python
+TTS_VOICE_DIR=~/.nephesh/tts/voices
+TTS_MODEL_CHECKPOINT=/path/to/epochs_2nd_00020.pth
+TTS_MODEL_CONFIG=/path/to/config.yml
+TTS_PLAYBACK_COMMAND=aplay
+```
+
+Every catalog entry must declare a feminine gender and point to a reference
+WAV inside `TTS_VOICE_DIR`. Normal speech is synthesized in memory and piped to
+the playback command; the worker does not write recordings. The four tools are
+`tts_list_voices`, `tts_set_voice`, `tts_voice_info`, and `tts_speak`. The latter
+supports speed, style weight, and warmth modulation.
 | `open_questions` | (optional list of strings) | Unresolved questions carried with the record |
 
 Defaults: `experience_mode=unknown`, `historical_status=uncertain`, `recorded_during=unknown`. Missing provenance must not become false certainty — `unknown` is the honest default. Legacy memories without these fields remain unlabeled.

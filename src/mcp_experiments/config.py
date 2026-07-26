@@ -61,6 +61,15 @@ class Settings:
         "OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")
     )
 
+    # TTS is an optional isolated worker.  Keep its large ML dependencies out
+    # of the Nephesh server environment and keep voices deployment-owned.
+    tts_enabled: bool = os.getenv("TTS_ENABLED", "").lower() in ("1", "true", "yes")
+    tts_python: str = os.getenv("TTS_PYTHON", "")
+    tts_voice_dir: str = os.getenv("TTS_VOICE_DIR", str(Path.home() / ".nephesh" / "tts" / "voices"))
+    tts_model_checkpoint: str = os.getenv("TTS_MODEL_CHECKPOINT", "")
+    tts_model_config: str = os.getenv("TTS_MODEL_CONFIG", "")
+    tts_playback_command: str = os.getenv("TTS_PLAYBACK_COMMAND", "aplay")
+
     @property
     def data_dir(self) -> Path:
         path = Path(self.vector_db_path).parent
