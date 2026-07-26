@@ -40,8 +40,9 @@ worker.
 - TTS registration is opt-in with `TTS_ENABLED`.
 - Model checkpoints, voice references, and deployment configuration stay
   outside the repository.
-- The worker is lazy: model loading occurs on the first voice operation and
-  remains resident for live switching.
+- The worker is lazy: model loading occurs when needed, and the model plus
+  cached styles are released after every synthesis so CUDA VRAM does not remain
+  occupied between spoken passages.
 - StyleTTS2 0.1.6 needs two compatibility shims in the worker for modern
   LangChain import paths and PyTorch 2.6 checkpoint loading; they do not affect
   Nephesh's main process.

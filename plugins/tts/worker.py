@@ -5,6 +5,7 @@ memory.  It communicates with the main server over newline-delimited JSON.
 """
 from __future__ import annotations
 
+import gc
 import io
 import json
 import os
@@ -29,6 +30,7 @@ class Worker:
         self.config = Path(os.environ.get("TTS_MODEL_CONFIG", "")).expanduser()
         self.playback_command = os.environ.get("TTS_PLAYBACK_COMMAND", "aplay")
         self.engine: Any = None
+        self._torch: Any = None
         self.voices: dict[str, dict[str, Any]] = {}
         self.styles: dict[str, Any] = {}
         self.active_voice: str | None = None
@@ -69,6 +71,7 @@ class Worker:
         # Nephesh's main server to its obsolete dependency graph.
         import torch
         import nltk
+        self._torch = torch
 
         # Newer NLTK separates the Punkt tables used by the older StyleTTS2
         # tokenizer.  Keep the data in the user's cache, never in the repo.
@@ -104,6 +107,15 @@ class Worker:
             config_path=str(self.config),
         )
 
+    def _release_engine(self) -> None:
+        """Release model and CUDA allocations after a synthesis operation."""
+        self.engine = None
+        self.styles.clear()
+        gc.collect()
+        if self._torch is not None and self._torch.cuda.is_available():
+            self._torch.cuda.empty_cache()
+            self._torch.cuda.ipc_collect()
+
     def _style(self, voice_id: str) -> Any:
         self._ensure_engine()
         if voice_id not in self.voices:
@@ -131,32 +143,35 @@ class Worker:
             if not text:
                 raise RuntimeError("text must not be empty")
             voice_id = str(request.get("voice_id") or self.active_voice or "").strip()
-            style = self._style(voice_id)
-            warmth = max(-1.0, min(1.0, float(request.get("warmth", 0.0))))
-            style_weight = max(0.0, min(1.0, float(request.get("style_weight", 0.5))))
-            speed = max(0.5, min(2.0, float(request.get("speed", 1.0))))
-            # StyleTTS2 exposes alpha/beta rather than named warmth controls.
-            # Keep the public API stable while mapping gently onto its style
-            # and prosody interpolation knobs.
-            alpha = max(0.05, min(0.8, 0.3 + warmth * 0.15))
-            beta = max(0.05, min(0.95, 0.35 + style_weight * 0.5))
-            audio = self.engine.inference(
-                text,
-                ref_s=style,
-                alpha=alpha,
-                beta=beta,
-                embedding_scale=0.8 + style_weight * 0.4,
-            )
-            if speed != 1.0:
-                import librosa
+            try:
+                style = self._style(voice_id)
+                warmth = max(-1.0, min(1.0, float(request.get("warmth", 0.0))))
+                style_weight = max(0.0, min(1.0, float(request.get("style_weight", 0.5))))
+                speed = max(0.5, min(2.0, float(request.get("speed", 1.0))))
+                # StyleTTS2 exposes alpha/beta rather than named warmth controls.
+                # Keep the public API stable while mapping gently onto its style
+                # and prosody interpolation knobs.
+                alpha = max(0.05, min(0.8, 0.3 + warmth * 0.15))
+                beta = max(0.05, min(0.95, 0.35 + style_weight * 0.5))
+                audio = self.engine.inference(
+                    text,
+                    ref_s=style,
+                    alpha=alpha,
+                    beta=beta,
+                    embedding_scale=0.8 + style_weight * 0.4,
+                )
+                if speed != 1.0:
+                    import librosa
 
-                audio = librosa.effects.time_stretch(audio.astype("float32"), rate=speed)
-            import soundfile as sf
+                    audio = librosa.effects.time_stretch(audio.astype("float32"), rate=speed)
+                import soundfile as sf
 
-            wav = io.BytesIO()
-            sf.write(wav, audio, 24000, format="WAV", subtype="PCM_16")
-            subprocess.run([self.playback_command, "-q"], input=wav.getvalue(), check=True)
-            return {"ok": True, "voice_id": voice_id, "sample_rate": 24000, "duration_seconds": len(audio) / 24000}
+                wav = io.BytesIO()
+                sf.write(wav, audio, 24000, format="WAV", subtype="PCM_16")
+                subprocess.run([self.playback_command, "-q"], input=wav.getvalue(), check=True)
+                return {"ok": True, "voice_id": voice_id, "sample_rate": 24000, "duration_seconds": len(audio) / 24000}
+            finally:
+                self._release_engine()
         raise RuntimeError(f"unknown TTS action: {action}")
 
 
