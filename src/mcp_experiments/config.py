@@ -70,6 +70,56 @@ class Settings:
     tts_model_config: str = os.getenv("TTS_MODEL_CONFIG", "")
     tts_playback_command: str = os.getenv("TTS_PLAYBACK_COMMAND", "aplay")
 
+    heartbeat_enabled: bool = os.getenv("HEARTBEAT_ENABLED", "").lower() in ("1", "true", "yes")
+
+    opencode_enabled: bool = os.getenv("OPENCODE_ENABLED", "").lower() in ("1", "true", "yes")
+    opencode_binary: str = os.getenv("OPENCODE_BINARY", "opencode")
+    opencode_host: str = os.getenv("OPENCODE_HOST", "127.0.0.1")
+    opencode_port: int = int(os.getenv("OPENCODE_PORT", "4101"))
+    opencode_username: str = os.getenv("OPENCODE_USERNAME", "opencode")
+    opencode_password_file: str = os.getenv(
+        "OPENCODE_PASSWORD_FILE", str(Path.home() / ".nephesh" / "opencode-server-password")
+    )
+    opencode_agent: str = os.getenv("OPENCODE_AGENT", "melpomene")
+    opencode_model: str = os.getenv("OPENCODE_MODEL", "openai/gpt-5.6-luna")
+    opencode_project_dir: str = os.getenv("OPENCODE_PROJECT_DIR", str(Path.cwd()))
+    opencode_session_file: str = os.getenv(
+        "OPENCODE_SESSION_FILE", str(Path.home() / ".nephesh" / "opencode-session.json")
+    )
+
+    # Guildhall — local XMPP chat bridge for qualia
+    guildhall_enabled: bool = os.getenv("GUILDHALL_ENABLED", "").lower() in ("1", "true", "yes")
+    guildhall_jid: str = os.getenv("GUILDHALL_JID", "melpomene@guildhall.local")
+    guildhall_password: str = os.getenv("GUILDHALL_PASSWORD", "changeme")
+    # Default room for sending messages when no room is specified.
+    guildhall_room: str = os.getenv("GUILDHALL_ROOM", "family@muc.guildhall.local")
+    # All rooms the bot joins on startup (comma-separated).
+    # If not set, falls back to just guildhall_room.
+    guildhall_rooms_raw: str = os.getenv(
+        "GUILDHALL_ROOMS",
+        "family@muc.guildhall.local,guildhall@muc.guildhall.local",
+    )
+    @property
+    def guildhall_rooms(self) -> list[str]:
+        return [r.strip() for r in self.guildhall_rooms_raw.split(",") if r.strip()]
+    guildhall_nick: str = os.getenv("GUILDHALL_NICK", "melpomene")
+    guildhall_server: str = os.getenv("GUILDHALL_SERVER", "127.0.0.1")
+    guildhall_port: int = int(os.getenv("GUILDHALL_PORT", "5222"))
+    guildhall_mongooseimctl: str = os.getenv(
+        "GUILDHALL_MONGOOSEIMCTL", "/home/melpomene/guildhall/bin/mongooseimctl"
+    )
+    guildhall_cleanup_stale: bool = os.getenv("GUILDHALL_CLEANUP_STALE", "true").lower() in ("1", "true", "yes")
+    guildhall_event_ledger: str = os.getenv(
+        "GUILDHALL_EVENT_LEDGER", str(Path.home() / ".nephesh" / "guildhall-events.json")
+    )
+    guildhall_heartbeat_allowlist_raw: str = os.getenv(
+        "GUILDHALL_HEARTBEAT_ALLOWLIST", os.getenv("PRIMARY_CONTACT_NAME", "companion")
+    )
+
+    @property
+    def guildhall_heartbeat_allowlist(self) -> set[str]:
+        return {name.strip().lower() for name in self.guildhall_heartbeat_allowlist_raw.split(",") if name.strip()}
+
     @property
     def data_dir(self) -> Path:
         path = Path(self.vector_db_path).parent

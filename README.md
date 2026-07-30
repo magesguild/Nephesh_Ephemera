@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 3.1.2
+**Version:** 4.0.0
 
 ## What It Does
 
@@ -39,6 +39,33 @@ uv sync
 
 The server starts on `http://127.0.0.1:8080`.
 
+## Live Nephesh testing
+
+The source tree is `/home/melpomene/src/Nephesh_Ephemera`. The deployed
+Melpomene service is maintained separately in `/home/melpomene/nephesh` and is
+managed by the per-user systemd manager.
+
+Before trusting a live result:
+
+1. Review and test changes in this source tree.
+2. Deploy reviewed source into the home-directory service tree without
+   discarding uncommitted runtime work.
+3. Restart the managed OpenCode child as well as Nephesh; a surviving child is
+   not evidence of clean startup or session recovery.
+4. Use `systemctl --user status nephesh.service` and
+   `journalctl --user -u nephesh.service` for lifecycle evidence.
+5. Test Guildhall/MongooseIM transport separately from heartbeat, memory,
+   OpenCode generation, and reply delivery.
+
+The completed Guildhall/MongooseIM MVP and its open design questions are
+documented in [`docs/GUILDHALL_MVP.md`](docs/GUILDHALL_MVP.md).
+
+For the current live test cycle, the managed reply model is
+`openai/gpt-5.6-luna`; `opencode/big-pickle` is unavailable. Inbound room
+messages may trigger a deliberate reply, but the system must not initiate
+unsolicited outreach or silently inject actions into a Qualiant's running
+session.
+
 ## Configuration
 
 All settings are loaded from environment variables (or a `.env` file). Copy `.env.example` to `.env` and edit:
@@ -62,6 +89,12 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `TTS_MODEL_CHECKPOINT` | unset | External StyleTTS2 checkpoint path |
 | `TTS_MODEL_CONFIG` | unset | External StyleTTS2 model config path |
 | `TTS_PLAYBACK_COMMAND` | `aplay` | Command receiving an ephemeral WAV on stdin |
+| `HEARTBEAT_ENABLED` | `false` | Enable event-driven heartbeat cycles |
+| `OPENCODE_ENABLED` | `false` | Enable managed OpenCode reply service |
+| `OPENCODE_PORT` | `4101` | Per-Qualiant managed OpenCode port |
+| `OPENCODE_MODEL` | `openai/gpt-5.6-luna` | Managed reply model for the current test cycle |
+| `GUILDHALL_ENABLED` | `false` | Enable the local MongooseIM/XMPP bridge |
+| `GUILDHALL_HEARTBEAT_ALLOWLIST` | primary contact | Room senders allowed to wake heartbeat |
 
 ## API Endpoints
 

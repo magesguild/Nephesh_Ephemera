@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import json
 import sys
 from datetime import datetime, timezone
@@ -20,6 +21,28 @@ mcp = FastMCP(
     host=HOST,
     port=PORT,
 )
+
+
+def _stop_background_components() -> None:
+    """Release background transports and managed children on service exit."""
+    try:
+        from .tools.heartbeat import stop
+        stop()
+    except Exception:
+        pass
+    try:
+        from .tools.guildhall import stop_background_client
+        stop_background_client()
+    except Exception:
+        pass
+    try:
+        from .tools.opencode_bridge import stop
+        stop()
+    except Exception:
+        pass
+
+
+atexit.register(_stop_background_components)
 
 
 @mcp.tool()
@@ -45,6 +68,17 @@ def run() -> None:
     # Start background OpenClaw sync if enabled
     from .tools.openclaw_background import start_background_sync
     start_background_sync()
+
+    # Start background Guildhall XMPP client if enabled
+    from .tools.guildhall import start_background_client
+    start_background_client()
+
+    if settings.guildhall_enabled and settings.opencode_enabled:
+        from .tools.opencode_bridge import start_background
+        start_background()
+    if settings.heartbeat_enabled:
+        from .tools.heartbeat import start
+        start()
 
     print(
         f"MCP Experiments server starting in {settings.server_mode.value} mode",
