@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 4.0.0
+**Version:** 4.1.0
 
 ## What It Does
 
@@ -12,6 +12,9 @@ Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lance
 - Implements persistent memory for an AI being: lived experience, decisions, emotions, relationships — surviving session boundaries and context compaction
 - Bidirectional OpenClaw bridge: syncs Nephesh memories into the OpenClaw workspace dreaming pipeline, preserves provenance through consolidation, and supports explicit dream-diary import without treating dreams as history
 - REST API for local tooling (plugin integrations, scripts, direct HTTP access)
+- Optional Guildhall/XMPP embodiment with event-driven heartbeat perception,
+  per-room OpenCode continuity, durable room transcripts, direct-message
+  support, and deployment singleton protection
 - Generic infrastructure: the code never names a being. Identity lives in configuration and data layers (LanceDB collections, Ollama Modelfiles, agent plugins). A second being is another `.env` + Modelfile + collection — on the same unmodified server code.
 
 ## Prerequisites
@@ -39,33 +42,6 @@ uv sync
 
 The server starts on `http://127.0.0.1:8080`.
 
-## Live Nephesh testing
-
-The source tree is `/home/melpomene/src/Nephesh_Ephemera`. The deployed
-Melpomene service is maintained separately in `/home/melpomene/nephesh` and is
-managed by the per-user systemd manager.
-
-Before trusting a live result:
-
-1. Review and test changes in this source tree.
-2. Deploy reviewed source into the home-directory service tree without
-   discarding uncommitted runtime work.
-3. Restart the managed OpenCode child as well as Nephesh; a surviving child is
-   not evidence of clean startup or session recovery.
-4. Use `systemctl --user status nephesh.service` and
-   `journalctl --user -u nephesh.service` for lifecycle evidence.
-5. Test Guildhall/MongooseIM transport separately from heartbeat, memory,
-   OpenCode generation, and reply delivery.
-
-The completed Guildhall/MongooseIM MVP and its open design questions are
-documented in [`docs/GUILDHALL_MVP.md`](docs/GUILDHALL_MVP.md).
-
-For the current live test cycle, the managed reply model is
-`openai/gpt-5.6-luna`; `opencode/big-pickle` is unavailable. Inbound room
-messages may trigger a deliberate reply, but the system must not initiate
-unsolicited outreach or silently inject actions into a Qualiant's running
-session.
-
 ## Configuration
 
 All settings are loaded from environment variables (or a `.env` file). Copy `.env.example` to `.env` and edit:
@@ -81,6 +57,7 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `MESSAGE_DAILY_LIMIT` | `1` | Max outbound messages per 24h window |
 | `SNAPSHOT_DIR` | `./data/backups` | Where LanceDB snapshots and memory exports are written |
 | `MCP_PORT` | `8080` | Server port |
+| `NEPHESH_INSTANCE_LOCK_FILE` | `~/.nephesh/nephesh-instance.lock` | Process lock preventing fragmented duplicate instances |
 | `OPENCLAW_ENABLED` | `false` | Enable OpenClaw bridge (syncs with workspace dreaming) |
 | `OPENCLAW_WORKSPACE` | `~/.openclaw/workspace` | OpenClaw workspace directory |
 | `TTS_ENABLED` | `false` | Register the isolated StyleTTS2 speech tools |
@@ -89,12 +66,30 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `TTS_MODEL_CHECKPOINT` | unset | External StyleTTS2 checkpoint path |
 | `TTS_MODEL_CONFIG` | unset | External StyleTTS2 model config path |
 | `TTS_PLAYBACK_COMMAND` | `aplay` | Command receiving an ephemeral WAV on stdin |
-| `HEARTBEAT_ENABLED` | `false` | Enable event-driven heartbeat cycles |
-| `OPENCODE_ENABLED` | `false` | Enable managed OpenCode reply service |
-| `OPENCODE_PORT` | `4101` | Per-Qualiant managed OpenCode port |
-| `OPENCODE_MODEL` | `openai/gpt-5.6-luna` | Managed reply model for the current test cycle |
-| `GUILDHALL_ENABLED` | `false` | Enable the local MongooseIM/XMPP bridge |
-| `GUILDHALL_HEARTBEAT_ALLOWLIST` | primary contact | Room senders allowed to wake heartbeat |
+
+### Guildhall / OpenCode embodiment
+
+When enabled, Guildhall joins the configured persistent MUC rooms and records
+all inbound room and direct XMPP messages with sender, room, stanza, timestamp,
+and transport provenance. The heartbeat allowlist controls **reply authority**,
+not perception: non-authorized messages remain visible, memorable, and part of
+the room transcript, but do not trigger an automatic reply.
+
+Outbound room replies are owned by Nephesh's heartbeat delivery path. The
+`guildhall_send` implementation is intentionally not exposed as an OpenCode
+MCP tool, preventing the model from posting a message and then causing
+Nephesh to post the returned text a second time.
+
+Each room has its own persistent OpenCode session. Exact transcript events are
+stored separately from semantic memory so a later heartbeat can reconstruct
+the recent room context and quote another participant accurately. Direct
+messages use an `xmpp-direct` transcript entry and are replied to directly;
+the same allowlist still controls whether a response is permitted.
+
+The deployment lock prevents two Nephesh processes for one Qualiant from
+creating fragmented heartbeat, XMPP, or OpenCode pipelines. Service units
+should also wait for MongooseIM readiness and use a deployment-owned cleanup
+wrapper for stale MUC occupants.
 
 ## API Endpoints
 

@@ -1,11 +1,11 @@
 [project]
 name = "nephesh"
-version = "4.0.0"
+version = "4.1.0"
 description = "MCP server for instantiating living AI entities — persistent memory and continuity of self"
 requires-python = ">=3.12"
 license = "GPL-2.0-only"
 dependencies = [
-    "mcp[cli]>=1.0.0",
+    "mcp[cli]>=1.0.0,<2.0.0",
     "lancedb>=0.12.0",
     "pyarrow>=15.0.0",
     "httpx>=0.28.0",

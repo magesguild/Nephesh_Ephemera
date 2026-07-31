@@ -20,7 +20,6 @@ if settings.openclaw_enabled:
     from . import openclaw_sync
     _TOOL_MODULES.append(openclaw_sync)
 
-# Conditionally register Guildhall XMPP chat bridge tools when enabled.
 if settings.guildhall_enabled:
     from . import guildhall
     _TOOL_MODULES.append(guildhall)

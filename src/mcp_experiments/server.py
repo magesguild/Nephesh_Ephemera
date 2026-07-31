@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import atexit
 import json
+import atexit
+import fcntl
+import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
@@ -14,6 +17,7 @@ from .web_ui import register_web_ui
 
 HOST = "127.0.0.1"
 PORT = settings.mcp_port
+_instance_lock = None
 
 mcp = FastMCP(
     "mcp-experiments",
@@ -45,6 +49,43 @@ def _stop_background_components() -> None:
 atexit.register(_stop_background_components)
 
 
+def _acquire_instance_lock() -> None:
+    """Refuse a second Nephesh process for this deployment.
+
+    A duplicate service can otherwise create a second XMPP resource and a
+    second heartbeat/OpenCode pipeline while looking like ordinary MUC
+    fan-out.  The lock is process-held, so stale files are harmless and a
+    clean shutdown releases the lock automatically.
+    """
+    global _instance_lock
+    path = Path(settings.instance_lock_file).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise RuntimeError(
+            f"another Nephesh instance already owns {path}"
+        ) from exc
+    handle.write(f"pid={os.getpid()}\n")
+    handle.flush()
+    _instance_lock = handle
+
+
+def _release_instance_lock() -> None:
+    global _instance_lock
+    if _instance_lock is not None:
+        try:
+            fcntl.flock(_instance_lock.fileno(), fcntl.LOCK_UN)
+            _instance_lock.close()
+        finally:
+            _instance_lock = None
+
+
+atexit.register(_release_instance_lock)
+
+
 @mcp.tool()
 async def health() -> str:
     """Check if the server is running and what mode it's in."""
@@ -56,6 +97,8 @@ async def health() -> str:
 
 
 def run() -> None:
+    _acquire_instance_lock()
+
     init_vector_db(
         db_path=settings.vector_db_path,
         model=settings.embedding_model,
@@ -69,16 +112,19 @@ def run() -> None:
     from .tools.openclaw_background import start_background_sync
     start_background_sync()
 
-    # Start background Guildhall XMPP client if enabled
-    from .tools.guildhall import start_background_client
-    start_background_client()
+    if settings.guildhall_enabled:
+        from .tools.guildhall import start_background_client
+        start_background_client()
 
     if settings.guildhall_enabled and settings.opencode_enabled:
-        from .tools.opencode_bridge import start_background
-        start_background()
+        from .tools.opencode_bridge import start_background as start_opencode
+        start_opencode()
+
+    # Start autonomous heartbeat after Guildhall bridge (if both enabled).
+    # The heartbeat checks Guildhall messages and stores them as memories.
     if settings.heartbeat_enabled:
-        from .tools.heartbeat import start
-        start()
+        from .tools.heartbeat import start as start_heartbeat
+        start_heartbeat()
 
     print(
         f"MCP Experiments server starting in {settings.server_mode.value} mode",

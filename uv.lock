@@ -420,7 +420,7 @@ wheels = [
 
 [[package]]
 name = "nephesh"
-version = "4.0.0"
+version = "4.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "httpx" },
@@ -435,7 +435,7 @@ dependencies = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "lancedb", specifier = ">=0.12.0" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.0.0" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.0.0,<2.0.0" },
     { name = "pyarrow", specifier = ">=15.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "slixmpp", specifier = ">=1.17.0" },
