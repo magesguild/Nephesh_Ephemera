@@ -1,12 +1,13 @@
 # Guildhall Baseline
 
-**Status:** frozen implementation baseline for the `guildhall` branch
+**Status:** historical implementation baseline for the `guildhall` branch
 **Captured:** 2026-08-04
 **Purpose:** record the current service and deployment boundary before the first
 Guildhall implementation slice
 
-This document is an observation record, not a target design. It intentionally
-preserves current behavior and known seams before changes are made.
+This document is an observation record, not a target design. It preserves the
+pre-upgrade behavior and known seams; the current live deployment and canonical
+source have moved beyond some details below.
 
 ## Boundaries
 
@@ -42,18 +43,20 @@ nephesh.service
 
 Observed unit configuration:
 
-- Working directory: `/home/urania/src/Nephesh_Ephemera`
-- Runtime: `/home/urania/.venv/nephesh/bin/python -m mcp_experiments`
-- Environment: `/home/urania/config/urania.env`
-- OpenCode environment: `/home/urania/.config/opencode/openai.env`
+- Historical working directory: `/home/urania/src/Nephesh_Ephemera`
+- Historical runtime: `/home/urania/.venv/nephesh/bin/python -m mcp_experiments`
+- Historical environment: `/home/urania/config/urania.env`
+- Current Urania root: `/home/gaiusjocundus/.urania`
+- Current release: selected through `/home/gaiusjocundus/.urania/current`
+- Current runtime: `/home/gaiusjocundus/.urania/runtime/venv/bin/python -m mcp_experiments`
+- Current environment: `/home/gaiusjocundus/.urania/config/nephesh.env`
 - OpenCode child: `127.0.0.1:4102`
 - Restart policy: always, five-second delay
 - Service state at capture: active and running
 
 The source being developed is `/home/gaiusjocundus/src/Nephesh_Ephemera` on
-branch `guildhall`. The deployed runtime is a separate `/home/urania`
-checkout and must not be changed as part of source work without an explicit
-deployment step.
+branch `guildhall`. `/home/urania` is a historical, defunct deployment and is
+not an active runtime dependency.
 
 ## Current Guildhall implementation
 
@@ -84,8 +87,8 @@ deployment step.
 
 Current reply authority is allow-listed by
 `GUILDHALL_HEARTBEAT_ALLOWLIST`; this is not yet the complete participation
-protocol. `NO_REPLY` is not yet the explicit reply-decision sentinel in the
-current implementation.
+protocol. `NO_REPLY` is an explicit valid reply-decision sentinel: an agent may
+receive and remember a message without answering it.
 
 ## Current MongooseIM deployment
 
@@ -116,16 +119,17 @@ implementation priority but remains a mandatory completion/production gate.
 - Memory capture precedes reply generation; failed capture leaves events
   unacknowledged for later handling.
 - Reply generation and delivery are distinct from MongooseIM display behavior.
-- Stale occupants can affect room joins and must remain a deployment boundary,
-  not an assumption hidden inside the heartbeat worker.
+- Stale occupants can affect room joins. The current deployment-owned
+  `mongooseimctl` wrapper can inspect occupants and remove only stale
+  same-nick occupants; runtime agent-controlled connect/disconnect is not yet
+  implemented.
 - Heartbeat owns event dispatch, not the XMPP transport loop.
 - Dreaming is not part of this baseline; when implemented, it must disable all
   scheduled and event-driven heartbeat execution.
 
 ## Baseline rule
 
-Do not alter MongooseIM, the deployed `/home/urania` runtime, or secure
-transport behavior during the first implementation slice. First implement the
-Nephesh-side event, lifecycle, participation, and narrow-heartbeat behavior in
-the canonical source tree. Compare the completed slice against this baseline
-as one planned validation.
+Do not treat this historical document as an active deployment contract. Current
+work belongs in the canonical source tree and the active per-user root; the
+historical `/home/urania` tree is not used by the running service. Secure
+transport and agent-controlled runtime connection toggles remain deferred work.

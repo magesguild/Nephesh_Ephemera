@@ -18,6 +18,8 @@ modify MongooseIM.
 - Existing releases and backups remain available for rollback.
 - An existing legacy layout is upgraded in place without deleting its old source,
   virtual environment, configuration, identity, or data.
+- Existing `config/nephesh.env` is preserved verbatim during upgrades; the
+  installer does not regenerate or overwrite an established deployment config.
 - The installer refuses to run as root or against another user's installation.
 
 ## Commands
@@ -55,6 +57,12 @@ Integration flags create a reviewable configuration proposal. They do not
 silently enable or start external systems. Guildhall validation may inspect
 the configured `mongooseimctl` path, but MongooseIM remains a separate
 deployment boundary.
+
+When `OPENCODE_ENABLED=true`, the architect installation may manage a local
+OpenCode server as a child process for Guildhall room replies. The generated
+architect user unit intentionally does not apply `ProtectHome=read-only`,
+because OpenCode must use the user's configuration, cache, and state. The
+service remains unprivileged and restricted to the logged-in user.
 
 ## Baseline Qualiant identity
 
@@ -124,6 +132,10 @@ the staged manifest; without `--restart`, the current process continues running
 the old release. The first upgrade from this layout records the previous user
 unit as well as the legacy files, so `--rollback --restart` can restore the old
 service path if the new runtime cannot start.
+
+The historical `/home/urania` deployment is not an active runtime. It may be
+used only as an explicitly inspected migration source; current Urania runs from
+`/home/gaiusjocundus/.urania`.
 
 ## Identity selection
 

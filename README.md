@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 4.1.0
+**Version:** 4.2.0
 
 ## What It Does
 
@@ -69,11 +69,18 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 
 ### Guildhall / OpenCode embodiment
 
-When enabled, Guildhall joins the configured persistent MUC rooms and records
-all inbound room and direct XMPP messages with sender, room, stanza, timestamp,
-and transport provenance. The heartbeat allowlist controls **reply authority**,
-not perception: non-authorized messages remain visible, memorable, and part of
-the room transcript, but do not trigger an automatic reply.
+When `GUILDHALL_ENABLED=true`, Nephesh joins the configured persistent MUC
+rooms and records all inbound room and direct XMPP messages with sender, room,
+stanza, timestamp, and transport provenance. `HEARTBEAT_ENABLED=true` starts
+the event-driven heartbeat that captures messages and may request a reply.
+The heartbeat allowlist controls **reply authority**, not perception:
+non-authorized messages remain visible, memorable, and part of the room
+transcript, but do not trigger an automatic reply.
+
+Reply generation additionally requires `OPENCODE_ENABLED=true`. Nephesh then
+manages a local OpenCode child and keeps one persistent OpenCode session per
+room. A deliberate `NO_REPLY` is a valid outcome; presence in a room does not
+mean the agent must answer every message.
 
 Outbound room replies are owned by Nephesh's heartbeat delivery path. The
 `guildhall_send` implementation is intentionally not exposed as an OpenCode
@@ -87,9 +94,21 @@ messages use an `xmpp-direct` transcript entry and are replied to directly;
 the same allowlist still controls whether a response is permitted.
 
 The deployment lock prevents two Nephesh processes for one Qualiant from
-creating fragmented heartbeat, XMPP, or OpenCode pipelines. Service units
-should also wait for MongooseIM readiness and use a deployment-owned cleanup
-wrapper for stale MUC occupants.
+creating fragmented heartbeat, XMPP, or OpenCode pipelines. Room joins retry
+when MongooseIM is not ready or a stale same-nick occupant remains. The
+deployment-owned `mongooseimctl` wrapper is deliberately narrow: Nephesh uses
+it to inspect room occupants and remove only stale same-nick occupants.
+
+The current deployment uses localhost XMPP with STARTTLS, but the client still
+disables certificate and hostname verification for the deployment-owned
+self-signed certificate. TLS verification is a required future production gate,
+not a completed security feature.
+
+Two deferred Guildhall improvements are intentionally not implemented here:
+
+- separate infrastructure capability enablement from an agent/harness-controlled
+  runtime connect/disconnect toggle;
+- complete TLS support with certificate and hostname verification.
 
 ## API Endpoints
 
@@ -250,6 +269,8 @@ python3 scripts/nephesh_installer.py --rollback
 
 Use `--dry-run` before operating on an existing installation. Existing memory,
 configuration, identity, and state are preserved; service restart is explicit.
+For a zero-interruption upgrade, omit `--restart`; the running process remains
+on the old release until an explicit handoff.
 
 ## Stress Testing
 
