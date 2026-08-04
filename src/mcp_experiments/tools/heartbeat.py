@@ -236,7 +236,7 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
         acknowledge_message_ids,
         send_message_sync,
     )
-    from .memory import memory_ingest
+    from .memory import memory_ingest, memory_recall
     from .opencode_bridge import reply
 
     messages: list[dict[str, Any]] = []
@@ -346,10 +346,18 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
             directly_addressed = any(
                 _is_directly_addressed(message) for message in reply_messages
             )
+            query = "\n".join(str(message.get("body", "")) for message in room_messages)
+            try:
+                memory_impulse = asyncio.run(memory_recall(query=query, n_results=5))
+                memory_impulse = memory_impulse[:12000]
+            except Exception:
+                logger.warning("heartbeat: memory retrieval impulse failed", exc_info=True)
+                memory_impulse = None
             response = reply(
                 room,
                 _recent_transcript(room) or room_messages,
                 directly_addressed=directly_addressed,
+                memory_impulse=memory_impulse,
             )
             if response is None:
                 return DecisionResult(Decision.RETRYABLE_FAILURE)

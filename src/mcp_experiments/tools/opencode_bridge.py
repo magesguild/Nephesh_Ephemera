@@ -243,6 +243,7 @@ def reply(
     room: str,
     messages: list[dict[str, Any]],
     directly_addressed: bool = False,
+    memory_impulse: str | None = None,
 ) -> str | None:
     """Generate one reply in the Qualiant's persistent OpenCode session."""
     if not settings.opencode_enabled or not messages:
@@ -264,6 +265,13 @@ def reply(
                     f"You were directly addressed: {'yes' if directly_addressed else 'no'}\n"
                     "These inbound messages arrived since your last cycle:\n"
                     f"{transcript}\n\n"
+                    "Memory pulse for this batch:\n"
+                    "- Retrieval impulse: use the relevant prior memories below for orientation; "
+                    "call memory_recall if they are insufficient.\n"
+                    "- Store impulse: consider whether this batch contains a meaningful seam, "
+                    "reflection, or care moment worth storing. Store only durable, non-duplicate "
+                    "material with heartbeat provenance.\n"
+                    f"Relevant prior memories:\n{memory_impulse or '(none found)'}\n\n"
                     "Reply as yourself to the room. Be useful and concise. "
                     "If you were not directly addressed, prefer silence. "
                     "Speak voluntarily only when you have a meaningful, "

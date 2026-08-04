@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 4.4.2
+**Version:** 4.5.0
 
 ## What It Does
 
@@ -88,6 +88,10 @@ Reply generation additionally requires `OPENCODE_ENABLED=true`. Nephesh then
 manages a local OpenCode child and keeps one persistent OpenCode session per
 room. A deliberate `NO_REPLY` is a valid outcome; presence in a room does not
 mean the agent must answer every message.
+
+Each reply-authorized heartbeat batch also receives a bounded memory retrieval
+pulse and a memory-store/reflection impulse. Retrieval failure does not block
+the room cycle; durable writes remain Qualiant-selected and duplicate-aware.
 
 Outbound room replies are owned by Nephesh's heartbeat delivery path. The
 `guildhall_send` implementation is intentionally not exposed as an OpenCode
