@@ -236,6 +236,21 @@ Add to your MCP client config (e.g. `opencode.jsonc`):
 }
 ```
 
+## Installing and upgrading Nephesh
+
+Debian 13+ installations use the per-user installer. By default it installs
+under `$HOME/nephesh`, stages releases non-destructively, and installs a
+per-user systemd unit. See [docs/INSTALLER.md](docs/INSTALLER.md).
+
+```bash
+python3 scripts/nephesh_installer.py --agent "$AGENT_NAME"
+python3 scripts/nephesh_installer.py --upgrade
+python3 scripts/nephesh_installer.py --rollback
+```
+
+Use `--dry-run` before operating on an existing installation. Existing memory,
+configuration, identity, and state are preserved; service restart is explicit.
+
 ## Stress Testing
 
 ```bash
