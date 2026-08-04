@@ -229,6 +229,12 @@ The memory bridge is idempotent — it tracks synced content and skips duplicate
 
 **Architecture:** Nephesh is the canonical autobiographical memory. OpenClaw's dreaming reads daily notes, ranks entries, and promotes consolidated insights to MEMORY.md. The bridge feeds Nephesh memories into this pipeline and pulls consolidated results back, so both systems share one life.
 
+Some sister deployments also maintain a vector index and perform periodic
+database optimization from heartbeat maintenance. That is a future, opt-in
+deployment capability—not part of the generic OpenClaw bridge or the default
+installer. Any later implementation must specify collection scope, thresholds,
+locking, snapshots, rollback, observability, and an explicit disable/pause path.
+
 ### Metadata Filtering
 
 `vector_store_search` supports rich metadata filtering:
