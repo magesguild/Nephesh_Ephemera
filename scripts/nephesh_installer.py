@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.2.4"
+VERSION = "0.2.5"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 OLLAMA_INSTALL_URL = "https://ollama.com/install.sh"
@@ -135,7 +135,13 @@ def port_is_free(port: int) -> bool:
     return True
 
 
-def allocate_ollama_port(root: Path, *, dry_run: bool) -> int:
+def allocate_ollama_port(
+    root: Path,
+    *,
+    agent_name: str,
+    unit_dir: Path | None,
+    dry_run: bool,
+) -> int:
     """Choose and persist no state yet; the caller records the chosen port."""
     config_paths = [root / "config" / "nephesh.env"]
     config_paths.extend(root.glob("*.env"))
@@ -146,7 +152,14 @@ def allocate_ollama_port(root: Path, *, dry_run: bool) -> int:
             if line.startswith("EMBEDDING_BASE_URL="):
                 match = re.search(r"^EMBEDDING_BASE_URL=https?://(?:127\.0\.0\.1|localhost):(\d+)(?:/|$)", line)
                 if match:
-                    return int(match.group(1))
+                    configured = int(match.group(1))
+                    existing_unit_dir = unit_dir or (Path.home() / ".config" / "systemd" / "user")
+                    managed_names = (
+                        f"ollama-{agent_name.lower()}.service",
+                        f"{agent_name.lower()}-ollama.service",
+                    )
+                    if port_is_free(configured) or any((existing_unit_dir / name).exists() for name in managed_names):
+                        return configured
     for port in range(11434, 11535):
         if dry_run or port_is_free(port):
             return port
@@ -499,6 +512,36 @@ def preserve_config(
         print(f"would create {config}")
 
 
+def update_embedding_endpoint(root: Path, port: int, *, dry_run: bool) -> None:
+    """Migrate an existing local embedding endpoint with a rollback copy."""
+    config = root / "config" / "nephesh.env"
+    if not config.exists():
+        return
+    lines = config.read_text().splitlines()
+    replacement = f"EMBEDDING_BASE_URL=http://127.0.0.1:{port}"
+    changed = False
+    updated: list[str] = []
+    for line in lines:
+        if line.startswith("EMBEDDING_BASE_URL="):
+            if line != replacement:
+                changed = True
+            updated.append(replacement)
+        else:
+            updated.append(line)
+    if not changed:
+        return
+    backup = config.with_suffix(config.suffix + ".pre-ollama")
+    if dry_run:
+        print(f"would migrate embedding endpoint in {config}; backup {backup}")
+        return
+    if not backup.exists():
+        shutil.copy2(config, backup)
+    temporary = config.with_suffix(config.suffix + ".tmp")
+    temporary.write_text("\n".join(updated) + "\n")
+    os.replace(temporary, config)
+    config.chmod(0o600)
+
+
 def install_identity(root: Path, agent_name: str, *, kernel_file: Path | None, dry_run: bool) -> None:
     identity = root / "identity"
     kernel = identity / "kernel.md"
@@ -673,7 +716,13 @@ def main() -> int:
             else (legacy_agent or "Qualiant")
         )
         args.agent = validate_agent_name(requested_agent)
-        ollama_port = args.ollama_port or allocate_ollama_port(root, dry_run=args.dry_run)
+        unit_dir = args.unit_dir.expanduser().resolve() if args.unit_dir else None
+        ollama_port = args.ollama_port or allocate_ollama_port(
+            root,
+            agent_name=args.agent,
+            unit_dir=unit_dir,
+            dry_run=args.dry_run,
+        )
         if not 1 <= ollama_port <= 65535:
             raise InstallerError("--ollama-port must be between 1 and 65535")
         validate_service_options(
@@ -746,7 +795,7 @@ def main() -> int:
                     binary=ollama_binary,
                     port=ollama_port,
                     cpu=args.cpu,
-                    unit_dir=args.unit_dir.expanduser().resolve() if args.unit_dir else None,
+                    unit_dir=unit_dir,
                     dry_run=args.dry_run,
                 )
             backup = backup_existing(root, root / "backups", dry_run=args.dry_run)
@@ -771,6 +820,8 @@ def main() -> int:
                 embedding_base_url=f"http://127.0.0.1:{ollama_port}",
                 dry_run=args.dry_run,
             )
+            if not args.no_ollama and not args.no_service:
+                update_embedding_endpoint(root, ollama_port, dry_run=args.dry_run)
             install_identity(
                 root,
                 args.agent,

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import json
 import os
+import socket
 from pathlib import Path
 
 from scripts.nephesh_installer import (
@@ -13,6 +14,7 @@ from scripts.nephesh_installer import (
     install_identity,
     install_unit,
     ensure_ollama_model,
+    allocate_ollama_port,
     ollama_unit_name,
     ollama_unit_text,
     preserve_config,
@@ -20,6 +22,14 @@ from scripts.nephesh_installer import (
     validate_agent_name,
     validate_service_options,
 )
+
+
+def _can_bind(sock: socket.socket, port: int) -> bool:
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        return False
+    return True
 
 
 class InstallerUnitTests(unittest.TestCase):
@@ -110,6 +120,19 @@ class InstallerUnitTests(unittest.TestCase):
                     os.environ.pop("LOG", None)
                 else:
                     os.environ["LOG"] = old_log
+
+    def test_occupied_legacy_embedding_port_is_reallocated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            occupied = socket.socket()
+            configured = next(port for port in range(11434, 11450) if _can_bind(occupied, port))
+            config = root / "thalia.env"
+            config.write_text(f"EMBEDDING_BASE_URL=http://localhost:{configured}\n")
+            try:
+                chosen = allocate_ollama_port(root, agent_name="Thalia", unit_dir=root / "units", dry_run=False)
+                self.assertNotEqual(chosen, configured)
+            finally:
+                occupied.close()
 
     def test_empty_new_root_does_not_create_recursive_backup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
