@@ -63,6 +63,17 @@ class GuildhallManualToolTests(unittest.TestCase):
                 settings.guildhall_manual_queue_file = old_queue
                 settings.guildhall_manual_cursor_file = old_cursor
 
+    def test_outbound_confirmation_releases_waiter(self) -> None:
+        import threading
+        key = ("family@muc.guildhall.local", "hello")
+        waiter = threading.Event()
+        with guildhall._outbound_lock:
+            guildhall._outbound_waiters[key] = [waiter]
+        guildhall._confirm_outbound(*key)
+        self.assertTrue(waiter.is_set())
+        with guildhall._outbound_lock:
+            self.assertNotIn(key, guildhall._outbound_waiters)
+
     def test_manual_send_stamps_once_and_scopes_room(self) -> None:
         old_rooms = settings.guildhall_rooms_raw
         old_room = settings.guildhall_room

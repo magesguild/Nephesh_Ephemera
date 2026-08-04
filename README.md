@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 4.5.0
+**Version:** 4.5.1
 
 ## What It Does
 
@@ -97,6 +97,10 @@ Outbound room replies are owned by Nephesh's heartbeat delivery path. The
 `guildhall_send` implementation is intentionally not exposed as an OpenCode
 MCP tool, preventing the model from posting a message and then causing
 Nephesh to post the returned text a second time.
+
+Outbound delivery is not considered complete when a local client queues a
+stanza. Nephesh waits for a correlated self-echo from the room before marking
+the lifecycle `delivered`; unconfirmed sends remain retryable.
 
 Each room has its own persistent OpenCode session. Exact transcript events are
 stored separately from semantic memory so a later heartbeat can reconstruct

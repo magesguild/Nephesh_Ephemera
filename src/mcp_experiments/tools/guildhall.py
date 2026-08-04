@@ -25,11 +25,14 @@ _thread: threading.Thread | None = None
 _stop = threading.Event()
 _started = False
 _connected = False
+_joined_rooms: set[str] = set()
+_joined_lock = threading.Lock()
 _buffer: list[dict[str, str]] = []
 _buffer_lock = threading.Lock()
 _manual_queue_lock = threading.Lock()
 _outbound_recent: dict[tuple[str, str], float] = {}
 _outbound_lock = threading.Lock()
+_outbound_waiters: dict[tuple[str, str], list[threading.Event]] = {}
 
 GUILDHALL_PROVENANCE_STAMP = (
     "Provenance: this message arrived from guildhall via opencode"
@@ -121,6 +124,19 @@ def is_connected() -> bool:
     return _connected_now()
 
 
+def _room_is_joined(room: str) -> bool:
+    with _joined_lock:
+        return room in _joined_rooms
+
+
+def _confirm_outbound(room: str, body: str) -> None:
+    key = (room, body.strip())
+    with _outbound_lock:
+        waiters = _outbound_waiters.pop(key, [])
+    for waiter in waiters:
+        waiter.set()
+
+
 def _cleanup_stale_occupants(room: str) -> None:
     """Remove old same-nick resources before retrying a room join."""
     if not settings.guildhall_cleanup_stale:
@@ -194,6 +210,8 @@ class _GuildhallBot:
                     logger.warning("guildhall: graceful room leave failed", exc_info=True)
             _connected = False
             self.connected = False
+            with _joined_lock:
+                _joined_rooms.clear()
             self.client.disconnect()
 
     async def _session_start(self, _event: Any) -> None:
@@ -213,6 +231,8 @@ class _GuildhallBot:
                 await self.client.plugin["xep_0045"].join_muc_wait(
                     room, nick, maxstanzas=0,
                 )
+                with _joined_lock:
+                    _joined_rooms.add(room)
                 logger.info("guildhall: joined %s as %s", room, nick)
             except Exception as exc:
                 logger.warning("guildhall: could not join %s: %s", room, exc)
@@ -229,6 +249,8 @@ class _GuildhallBot:
                 await self.client.plugin["xep_0045"].join_muc_wait(
                     room, nick, maxstanzas=0,
                 )
+                with _joined_lock:
+                    _joined_rooms.add(room)
                 logger.info("guildhall: joined %s as %s after retry", room, nick)
                 return
             except Exception as exc:
@@ -240,6 +262,8 @@ class _GuildhallBot:
         for room in settings.guildhall_rooms:
             try:
                 await self.client.plugin["xep_0045"].leave_muc(room, settings.guildhall_nick)
+                with _joined_lock:
+                    _joined_rooms.discard(room)
                 logger.info("guildhall: left %s as %s", room, settings.guildhall_nick)
             except Exception:
                 logger.debug("guildhall: leave failed for %s", room, exc_info=True)
@@ -250,6 +274,7 @@ class _GuildhallBot:
         sender = msg["from"]
         # A message is self-originated only when both room and nick match.
         if getattr(sender, "resource", "") == settings.guildhall_nick:
+            _confirm_outbound(str(getattr(sender, "bare", "")), str(msg["body"]))
             return
         entry = {
             "event_id": str(uuid.uuid4()),
@@ -280,6 +305,7 @@ class _GuildhallBot:
             return
         sender = msg["from"]
         if str(getattr(sender, "bare", "")) == settings.guildhall_jid:
+            _confirm_outbound(str(getattr(sender, "bare", "")), str(msg["body"]))
             return
         entry = {
             "event_id": str(uuid.uuid4()),
@@ -312,7 +338,8 @@ class _GuildhallBot:
         logger.info("guildhall: connection attempt failed: %s", event)
 
     async def send(self, room: str, body: str, delivery: str = "groupchat") -> None:
-        self.client.send_message(mto=room, mbody=body, mtype=delivery)
+        stanza = self.client.send_message(mto=room, mbody=body, mtype=delivery)
+        logger.info("guildhall: outbound stanza queued room=%s id=%s", room, stanza.get("id", ""))
 
 
 def acknowledge_message_ids(event_ids: set[str]) -> None:
@@ -407,12 +434,15 @@ def send_message_sync(room: str, message: str, delivery: str = "groupchat") -> b
     """Send a room message from a non-async heartbeat thread."""
     if not _connected_now() or _client is None or _loop is None:
         return False
+    if delivery == "groupchat" and not _room_is_joined(room):
+        return False
     # Final process-local idempotency gate at the transport boundary.  This
     # protects every caller, not only the heartbeat, from emitting the same
     # Melpomene text twice into one room during a retry/reconnect window.
     import time
     key = (room, message.strip())
     now = time.monotonic()
+    confirmation = threading.Event()
     with _outbound_lock:
         for old_key, sent_at in list(_outbound_recent.items()):
             if now - sent_at > 30.0:
@@ -420,16 +450,28 @@ def send_message_sync(room: str, message: str, delivery: str = "groupchat") -> b
         if key in _outbound_recent:
             logger.warning("guildhall: suppressed duplicate outbound message to %s", room)
             return True
-        _outbound_recent[key] = now
+        _outbound_waiters.setdefault(key, []).append(confirmation)
     try:
         future = asyncio.run_coroutine_threadsafe(
             _client.send(room, message, delivery), _loop,
         )
         future.result(timeout=10)
+        if not confirmation.wait(timeout=10):
+            logger.error("guildhall: outbound stanza was not echoed by room=%s", room)
+            return False
+        with _outbound_lock:
+            _outbound_recent[key] = time.monotonic()
         return True
     except Exception:
         logger.exception("guildhall: synchronous send failed for %s", room)
         return False
+    finally:
+        with _outbound_lock:
+            waiters = _outbound_waiters.get(key, [])
+            if confirmation in waiters:
+                waiters.remove(confirmation)
+            if not waiters:
+                _outbound_waiters.pop(key, None)
 
 
 async def guildhall_latest(clear: bool = True, room: str | None = None) -> str:
