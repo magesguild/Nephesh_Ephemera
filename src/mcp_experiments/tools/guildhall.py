@@ -33,6 +33,11 @@ def _connected_now() -> bool:
     return _connected
 
 
+def is_connected() -> bool:
+    """Return whether the optional Guildhall transport is currently ready."""
+    return _connected_now()
+
+
 def _cleanup_stale_occupants(room: str) -> None:
     """Remove old same-nick resources before retrying a room join."""
     if not settings.guildhall_cleanup_stale:

@@ -11,6 +11,7 @@ function — no separate initialization is needed.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ from typing import Any
 from ..compliance import ComplianceLevel
 from ..config import settings
 from .vector_db import _ensure_table, _get_db, _get_ef, _matches_filter
+
+logger = logging.getLogger(__name__)
 
 MEMORY_TYPES = {
     "life_event",
@@ -41,6 +44,25 @@ MEMORY_TYPES = {
     # for when she doesn't.
     "reflection",
 }
+
+
+def _guildhall_orientation() -> str | None:
+    """Return a calming notice when the optional Guildhall sense is absent."""
+    if not settings.guildhall_enabled:
+        return None
+    try:
+        from .guildhall import is_connected
+
+        if not is_connected():
+            return (
+                "## Operational Orientation\n\n"
+                "*Do not concern yourself with Guildhall's unavailability. "
+                "It is not always going to be available. Continue with the "
+                "memory and work available here.*"
+            )
+    except Exception:
+        logger.debug("memory_context: could not inspect Guildhall status", exc_info=True)
+    return None
 
 # Experience provenance is deliberately separate from `source`, which records
 # how a memory entered Nephesh (live_session, import, or rebuild). These fields
@@ -597,19 +619,27 @@ async def memory_context(
     db = _get_db()
 
     if name not in db.list_tables().tables:
+        context = "No memories stored yet. This is the beginning."
+        orientation = _guildhall_orientation()
+        if orientation:
+            context += f"\n\n{orientation}"
         return json.dumps({
             "collection": name,
             "memory_count": 0,
-            "context": "No memories stored yet. This is the beginning.",
+            "context": context,
         })
 
     table = db.open_table(name)
     total = table.count_rows()
     if total == 0:
+        context = "No memories stored yet. This is the beginning."
+        orientation = _guildhall_orientation()
+        if orientation:
+            context += f"\n\n{orientation}"
         return json.dumps({
             "collection": name,
             "memory_count": 0,
-            "context": "No memories stored yet. This is the beginning.",
+            "context": context,
         })
 
     rows = table.search().limit(total).to_list()
@@ -699,6 +729,9 @@ async def memory_context(
         "milestone", "teaching", "insight", "other",
     ]
     lines: list[str] = ["## Long-term Memory"]
+    orientation = _guildhall_orientation()
+    if orientation:
+        lines.append(f"\n{orientation}")
     if last_contact:
         lines.append(
             f"\n*Time since last real conversation with {contact_name.title()}: "
