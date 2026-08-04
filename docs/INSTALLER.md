@@ -15,6 +15,8 @@ modify MongooseIM.
 - `--no-service` stages and verifies without creating or managing any user unit;
   this is the required mode for tests and isolated staging.
 - Restarts require explicit `--restart`.
+- Generated user units allow a bounded graceful shutdown so Guildhall leave
+  presence can be sent before the process exits.
 - Existing releases and backups remain available for rollback.
 - An existing legacy layout is upgraded in place without deleting its old source,
   virtual environment, configuration, identity, or data.

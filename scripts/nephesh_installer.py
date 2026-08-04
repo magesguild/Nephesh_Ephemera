@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 OLLAMA_INSTALL_URL = "https://ollama.com/install.sh"
@@ -303,6 +303,7 @@ EnvironmentFile=-{env}
 ExecStart={venv_python} -m mcp_experiments
 Restart=on-failure
 RestartSec=5s
+TimeoutStopSec=15s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

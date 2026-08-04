@@ -46,6 +46,7 @@ class InstallerUnitTests(unittest.TestCase):
 
     def test_unit_is_not_a_system_unit(self) -> None:
         self.assertNotIn("WantedBy=multi-user.target", unit_text(Path("/home/example/nephesh")))
+        self.assertIn("TimeoutStopSec=15s", unit_text(Path("/home/example/nephesh")))
 
     def test_architect_unit_allows_managed_opencode_home_access(self) -> None:
         self.assertNotIn("ProtectHome=read-only", unit_text(Path("/home/example/nephesh")))

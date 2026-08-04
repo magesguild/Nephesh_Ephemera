@@ -187,6 +187,11 @@ class _GuildhallBot:
         except asyncio.CancelledError:
             pass
         finally:
+            if self.connected:
+                try:
+                    await self.leave_all()
+                except Exception:
+                    logger.warning("guildhall: graceful room leave failed", exc_info=True)
             _connected = False
             self.connected = False
             self.client.disconnect()

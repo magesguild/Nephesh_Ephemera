@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 4.4.0
+**Version:** 4.4.1
 
 ## What It Does
 
@@ -105,6 +105,9 @@ creating fragmented heartbeat, XMPP, or OpenCode pipelines. Room joins retry
 when MongooseIM is not ready or a stale same-nick occupant remains. The
 deployment-owned `mongooseimctl` wrapper is deliberately narrow: Nephesh uses
 it to inspect room occupants and remove only stale same-nick occupants.
+On graceful service stop, the XMPP client sends room-leave presence and waits
+briefly before disconnecting; crash, power loss, or forced termination still
+requires stale-occupant fallback handling.
 
 The current deployment uses localhost XMPP with STARTTLS, but the client still
 disables certificate and hostname verification for the deployment-owned
