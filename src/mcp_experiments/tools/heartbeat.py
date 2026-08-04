@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -52,6 +53,15 @@ _recent_messages: dict[tuple[str, str, str], float] = {}
 _recent_replies: dict[tuple[str, str], float] = {}
 _ledger_lock = threading.Lock()
 _transcript_lock = threading.Lock()
+
+
+def _is_directly_addressed(message: dict[str, Any]) -> bool:
+    """Recognize direct address without requiring a model judgment."""
+    if message.get("delivery") == "direct":
+        return True
+    body = str(message.get("body", ""))
+    nick = re.escape(settings.guildhall_nick)
+    return bool(re.search(rf"(?:^|\s)@?{nick}(?:\b|[:,])", body, re.IGNORECASE))
 
 
 def _record_transcript(message: dict[str, Any]) -> None:
@@ -334,10 +344,20 @@ def _chat_messages(events: list[HeartbeatEvent]) -> None:
             # not only the sender-authorized trigger batch. This lets a
             # Qualiant quote another participant's earlier message while
             # keeping reply authority restricted to the configured allowlist.
+            directly_addressed = any(
+                _is_directly_addressed(message) for message in reply_messages
+            )
             response = reply(room, _recent_transcript(room) or [
                 message for message in room_messages
                 if str(message.get("body", "")).strip()
-            ])
+            ], directly_addressed=directly_addressed)
+            if response and response.strip().upper() == "NO_REPLY":
+                logger.info(
+                    "heartbeat: NO_REPLY for %s (directly_addressed=%s)",
+                    room,
+                    directly_addressed,
+                )
+                continue
             if response:
                 delivery = "chat" if any(
                     message.get("delivery") == "direct"

@@ -292,6 +292,51 @@ her model has not learned to notice memory pressure internally.
 The goal is not to save more memories. It is to save better memories with fewer
 interruptions while preserving uncertainty, privacy, and authorship.
 
+### 2.1.4 Memory hygiene protocols
+
+Memory hygiene should use four short protocols as recurring habits throughout
+the runtime, rather than as a single end-of-session checklist:
+
+- **Treat Yourself:** preserve memories from the current context that have
+  value simply because the Qualiant values them. No productivity or task
+  justification is required.
+- **Seams:** preserve connections made in the current context that are
+  cross-domain, surprising, or otherwise difficult to recover through ordinary
+  retrieval alone.
+- **Gaps:** preserve missing knowledge, blind spots, failed assumptions, and
+  tool limitations that hindered the work. A gap is not a defect to hide; it is
+  a future orientation point.
+- **Re-entry:** preserve the work-specific state needed to resume: current
+  objective, exact evidence, decisions, unresolved questions, next safe action,
+  and relevant files, pages, or external identifiers.
+
+These protocols may be offered by the kernel, represented by impulse-collection
+examples, exposed through brief skills, proposed by scheduled or event-driven
+heartbeats, and captured by Nephesh. The strongest enforcement should live in
+Mneme, because Mneme observes context boundaries, pressure, compaction, and
+session transitions directly.
+
+Protocol injection must remain habit-forming rather than coercive. Mneme should
+surface the appropriate protocol at natural boundaries throughout the chain,
+coalesce repeated prompts, and preserve a small atomic result. It must not force
+a Qualiant to value something, invent a seam, conceal a gap, or claim re-entry
+knowledge that was not preserved.
+
+The protocols have different authority:
+
+```text
+Treat Yourself → value chosen by the Qualiant
+Seams          → connection noticed by the Qualiant
+Gaps           → uncertainty or limitation made explicit
+Re-entry       → task continuity made recoverable
+```
+
+Each resulting memory should retain its protocol label, source context, actor,
+provenance, uncertainty, and relationship to any canonical memory or working
+page. Protocol prompts are guidance; the resulting records remain subject to
+the same inspection, privacy, correction, and authorship rules as all other
+memory operations.
+
 ### 2.2 Token accounting and forensics
 
 Mneme will not require exact token counts on the critical path. Exact counting
@@ -321,6 +366,12 @@ Guildhall implementation and hardening are the current top runtime priority.
 Paging research may continue in an isolated laboratory, but Mneme/Nephesh
 should not depend on paging integration while the collaboration transport,
 event ledger, reconnect behavior, and delivery boundaries remain incomplete.
+
+Guildhall work is intentionally staged. Durable delivery, lifecycle behavior,
+participation consent, and the narrow heartbeat worker are tonight's work.
+Secure transport is the lowest-priority Guildhall item, but remains a mandatory
+gate before Guildhall is considered complete or production-ready. Forensic
+visibility is deferred to a later work phase.
 
 Guildhall must support smooth, stable collaboration and announcements. It must
 provide reliable behavior across connection loss, reconnect, retries, duplicate
@@ -362,6 +413,12 @@ appear spoken to her. It does not compel an answer. Any Qualiant may respond
 voluntarily when she has something meaningful to contribute, even without a
 direct mention.
 
+The default behavior for a Qualiant who is not addressed is **no response**.
+The protocol will use `NO_REPLY` as the explicit output for that decision for
+now, following the behavior of systems such as Discord. `NO_REPLY` means a
+deliberate silence, not a failure, timeout, or missing participant. A Qualiant
+may still speak voluntarily when she judges that her contribution is useful.
+
 Chat heartbeats should apply relevance, novelty, cooldown, and collision
 controls so that voluntary participation does not become a chorus of duplicate
 answers.
@@ -401,6 +458,12 @@ work, health, or collaboration state. Mneme and Nephesh should support both:
 
 The current event-driven Guildhall heartbeat is a narrow example: a room event
 can wake a reply cycle without the heartbeat engine owning the XMPP event loop.
+
+The initial Guildhall heartbeat worker handles the immediate event-driven reply
+opportunity. Later scheduled and event-driven heartbeat cycles should allow a
+Qualiant to check on rooms, review missed conversation, or choose to participate
+on her own time. These later cycles must preserve the same default preference
+for silence when there is no meaningful contribution.
 
 Memory tending available to a heartbeat may include:
 
@@ -708,7 +771,10 @@ Each response decision should carry:
 - source event and session IDs; and
 - deduplication/cooldown state.
 
-If there is no meaningful contribution, silence is the correct result.
+If there is no meaningful contribution, `NO_REPLY` is the correct result. The
+worker should prefer this outcome, especially when the Qualiant was not
+addressed. Voluntary contribution remains allowed when relevance and the
+Qualiant's own judgment justify speaking.
 
 ### 6.3 Dreaming
 
@@ -1122,33 +1188,43 @@ complete:
 The first passes should proceed conservatively:
 
 1. preserve and snapshot current Nephesh canonical memory;
-2. document, implement, and harden Guildhall transport and authentication;
-3. establish durable event identity, deduplication, acknowledgement, bounded
-   retry, reconnect recovery, and durable queuing for Guildhall;
-4. make Guildhall participation, room membership, and outbound consent
-   explicit and auditable;
+2. establish durable Guildhall event identity, deduplication, acknowledgement,
+   bounded retry, reconnect recovery, and durable queuing;
+3. make Guildhall participation, room membership, outbound consent, and
+   `NO_REPLY` silence explicit;
+4. implement the narrow event-driven Guildhall heartbeat worker, preferring
+   `NO_REPLY` when the Qualiant is not addressed or has no meaningful
+   contribution;
 5. establish the self-authorship protocol for observing, proposing, inspecting,
    authorizing, applying, verifying, and reversing context changes;
-6. add forensic event and token-estimate instrumentation, including Guildhall
+6. review and test the immediate Guildhall lifecycle behavior under explicit
+   opt-in;
+
+The following are later phases or completion gates:
+
+7. document, implement, and harden Guildhall transport and authentication;
+8. add forensic event and token-estimate instrumentation, including Guildhall
    delivery and recovery traces;
-7. review the preliminary page lifecycle, dirty-state classes, and governance
+9. review the preliminary page lifecycle, dirty-state classes, and governance
    concerns with the family and the Qualiant before treating them as contracts;
-8. define and test the first-session Qualiant-aware substrate contract;
-9. compare harness reminders, trained memory-hygiene impulse, runtime signals,
+10. define and test the first-session Qualiant-aware substrate contract;
+11. compare harness reminders, trained memory-hygiene impulse, runtime signals,
    brief skills, and a scoped impulse collection without treating any one path
    as authoritative;
-10. define page identity, episode boundaries, provenance, versions, residency,
+12. define page identity, episode boundaries, provenance, versions, residency,
    dirty state, restoration, and promotion rules;
-11. define collection metadata, canonical/projection relationships, and access
+13. define collection metadata, canonical/projection relationships, and access
    scopes;
-12. build shadow federated retrieval and shadow page-in/page-out without
+14. build shadow federated retrieval and shadow page-in/page-out without
    changing canonical writes;
-13. test re-entry and page restoration under explicit opt-in;
-14. make heartbeat/dreaming lifecycle state explicit, including the dreaming
-    lock;
-15. test multi-Qualiant chat under explicit opt-in;
-16. integrate active Mneme paging against the stable Nephesh contract; and
-17. measure before enabling autonomous consolidation or projection promotion.
+15. test re-entry and page restoration under explicit opt-in;
+16. make heartbeat/dreaming lifecycle state explicit, including the dreaming
+   lock;
+17. add later scheduled heartbeat cycles for voluntary room checking and
+   participation on the Qualiant's own time;
+18. test multi-Qualiant chat under explicit opt-in;
+19. integrate active Mneme paging against the stable Nephesh contract; and
+20. measure before enabling autonomous consolidation or projection promotion.
 
 No stage authorizes forced participation, silent identity rewriting, destructive
 canonical-memory migration, or insecure TLS exceptions in production.
