@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 OLLAMA_INSTALL_URL = "https://ollama.com/install.sh"
@@ -523,6 +523,10 @@ def update_embedding_endpoint(root: Path, port: int, *, dry_run: bool) -> None:
     updated: list[str] = []
     for line in lines:
         if line.startswith("EMBEDDING_BASE_URL="):
+            configured = re.search(r"^EMBEDDING_BASE_URL=https?://(?:127\.0\.0\.1|localhost):(\d+)(?:/|$)", line)
+            if configured and int(configured.group(1)) == port:
+                updated.append(line)
+                continue
             if line != replacement:
                 changed = True
             updated.append(replacement)

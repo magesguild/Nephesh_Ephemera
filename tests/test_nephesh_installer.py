@@ -14,6 +14,7 @@ from scripts.nephesh_installer import (
     install_identity,
     install_unit,
     ensure_ollama_model,
+    update_embedding_endpoint,
     allocate_ollama_port,
     ollama_unit_name,
     ollama_unit_text,
@@ -133,6 +134,17 @@ class InstallerUnitTests(unittest.TestCase):
                 self.assertNotEqual(chosen, configured)
             finally:
                 occupied.close()
+
+    def test_equivalent_local_embedding_endpoint_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config" / "nephesh.env"
+            config.parent.mkdir()
+            original = "EMBEDDING_BASE_URL=http://localhost:11436\nOTHER=value\n"
+            config.write_text(original)
+            update_embedding_endpoint(root, 11436, dry_run=False)
+            self.assertEqual(config.read_text(), original)
+            self.assertFalse(config.with_suffix(config.suffix + ".pre-ollama").exists())
 
     def test_empty_new_root_does_not_create_recursive_backup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
