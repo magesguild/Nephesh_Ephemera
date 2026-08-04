@@ -104,18 +104,18 @@ class Settings:
 
     # Guildhall — optional localhost XMPP bridge.
     guildhall_enabled: bool = os.getenv("GUILDHALL_ENABLED", "").lower() in ("1", "true", "yes")
-    guildhall_jid: str = os.getenv("GUILDHALL_JID", "melpomene@guildhall.local")
-    guildhall_password: str = os.getenv("GUILDHALL_PASSWORD", "changeme")
-    guildhall_room: str = os.getenv("GUILDHALL_ROOM", "family@muc.guildhall.local")
+    guildhall_jid: str = os.getenv("GUILDHALL_JID", "")
+    guildhall_password: str = os.getenv("GUILDHALL_PASSWORD", "")
+    guildhall_room: str = os.getenv("GUILDHALL_ROOM", "")
     guildhall_rooms_raw: str = os.getenv(
         "GUILDHALL_ROOMS",
-        "family@muc.guildhall.local,guildhall@muc.guildhall.local",
+        "",
     )
-    guildhall_nick: str = os.getenv("GUILDHALL_NICK", "melpomene")
-    guildhall_server: str = os.getenv("GUILDHALL_SERVER", "127.0.0.1")
+    guildhall_nick: str = os.getenv("GUILDHALL_NICK", "")
+    guildhall_server: str = os.getenv("GUILDHALL_SERVER", "")
     guildhall_port: int = int(os.getenv("GUILDHALL_PORT", "5222"))
     guildhall_mongooseimctl: str = os.getenv(
-        "GUILDHALL_MONGOOSEIMCTL", "/home/melpomene/guildhall/bin/mongooseimctl"
+        "GUILDHALL_MONGOOSEIMCTL", ""
     )
     guildhall_cleanup_stale: bool = os.getenv("GUILDHALL_CLEANUP_STALE", "true").lower() in ("1", "true", "yes")
     guildhall_event_ledger: str = os.getenv(

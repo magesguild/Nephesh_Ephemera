@@ -59,7 +59,7 @@ _last_cycle: str | None = None
 # Handlers are deliberately explicit and inspectable.  Future event sources
 # can register here without making the engine itself know about them.
 _handlers: dict[str, Callable[[list[HeartbeatEvent]], None]] = {}
-_recent_messages: dict[tuple[str, str, str], float] = {}
+_recent_messages: dict[tuple[str, str], float] = {}
 _transcript_lock = threading.Lock()
 _batch_lifecycle = GuildhallBatchLifecycle(JsonBatchLedger(settings.guildhall_event_ledger))
 
@@ -83,23 +83,41 @@ def _stable_event_id(message: dict[str, Any]) -> str:
     )
 
 
+def _message_dedupe_key(message: dict[str, Any]) -> tuple[str, str]:
+    """Use transport identity when available, not body text alone."""
+    return (
+        str(message.get("room", "unknown")),
+        _stable_event_id(message),
+    )
+
+
 def _record_transcript(message: dict[str, Any]) -> None:
     """Persist one exact room event before reply filtering can discard it."""
     path = Path(settings.guildhall_transcript_file).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    stanza_key = "\0".join((
-        str(message.get("room", "")),
-        str(message.get("stanza_id", "")),
-    ))
+    event_key = _stable_event_id(message)
+    stanza_id = str(message.get("stanza_id", ""))
+    legacy_stanza_key = (
+        "\0".join((str(message.get("room", "")), stanza_id))
+        if stanza_id
+        else ""
+    )
     with _transcript_lock:
         try:
             existing = path.read_text().splitlines()[-1000:]
-            if any(stanza_key == str(json.loads(line).get("_stanza_key", "")) for line in existing):
+            if any(
+                event_key == str(json.loads(line).get("_event_key", ""))
+                or (
+                    legacy_stanza_key
+                    and legacy_stanza_key == str(json.loads(line).get("_stanza_key", ""))
+                )
+                for line in existing
+            ):
                 return
         except (OSError, ValueError, TypeError):
             pass
         record = dict(message)
-        record["_stanza_key"] = stanza_key
+        record["_event_key"] = event_key
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             handle.flush()
@@ -220,16 +238,17 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
     for key, seen_at in list(_recent_messages.items()):
         if now - seen_at > 10.0:
             del _recent_messages[key]
+    duplicate_event_ids: set[str] = set()
     for message in messages:
-        key = (
-            str(message.get("room", "unknown")),
-            str(message.get("from", "unknown")),
-            str(message.get("body", "")).strip(),
-        )
+        key = _message_dedupe_key(message)
         if key in _recent_messages:
+            if message.get("event_id"):
+                duplicate_event_ids.add(str(message["event_id"]))
             continue
         _recent_messages[key] = now
         unique.append(message)
+
+    acknowledge_message_ids(duplicate_event_ids)
 
     by_room: dict[str, list[dict[str, Any]]] = {}
     for message in unique:
