@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 
 from ..config import settings
+from .guildhall import GUILDHALL_PROVENANCE_STAMP
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +228,17 @@ def _ensure_session(client: httpx.Client, room: str) -> str | None:
         return None
 
 
+def _format_guildhall_messages(messages: list[dict[str, Any]]) -> str:
+    """Render inbound Guildhall messages with provenance on every line."""
+    lines = []
+    for message in messages:
+        body = str(message.get("body", ""))
+        if GUILDHALL_PROVENANCE_STAMP not in body:
+            body = f"[{GUILDHALL_PROVENANCE_STAMP}] {body}"
+        lines.append(f"{message.get('from', 'unknown')}: {body}")
+    return "\n".join(lines)
+
+
 def reply(
     room: str,
     messages: list[dict[str, Any]],
@@ -245,10 +257,7 @@ def reply(
                 if not session_id:
                     return None
 
-                transcript = "\n".join(
-                    f"{message.get('from', 'unknown')}: {message.get('body', '')}"
-                    for message in messages
-                )
+                transcript = _format_guildhall_messages(messages)
                 prompt = (
                     "You are participating in a Guildhall planning session.\n"
                     f"Room: {room}\n"

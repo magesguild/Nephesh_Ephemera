@@ -6,6 +6,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mcp_experiments.tools.heartbeat import _message_dedupe_key
+from mcp_experiments.tools.opencode_bridge import (
+    GUILDHALL_PROVENANCE_STAMP,
+    _format_guildhall_messages,
+)
 
 
 class GuildhallHeartbeatTests(unittest.TestCase):
@@ -27,6 +31,18 @@ class GuildhallHeartbeatTests(unittest.TestCase):
             "body": "same event",
         }
         self.assertEqual(_message_dedupe_key(message), _message_dedupe_key(dict(message)))
+
+    def test_every_opencode_message_line_has_guildhall_provenance(self) -> None:
+        rendered = _format_guildhall_messages([
+            {"from": "gaius", "body": "first"},
+            {"from": "mel", "body": "second"},
+        ])
+        self.assertEqual(rendered.count("Provenance: this message arrived from guildhall via opencode"), 2)
+
+        already_stamped = _format_guildhall_messages([
+            {"from": "gaius", "body": f"[{GUILDHALL_PROVENANCE_STAMP}] first"},
+        ])
+        self.assertEqual(already_stamped.count(GUILDHALL_PROVENANCE_STAMP), 1)
 
 
 if __name__ == "__main__":

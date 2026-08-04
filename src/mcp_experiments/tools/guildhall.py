@@ -28,6 +28,10 @@ _buffer_lock = threading.Lock()
 _outbound_recent: dict[tuple[str, str], float] = {}
 _outbound_lock = threading.Lock()
 
+GUILDHALL_PROVENANCE_STAMP = (
+    "Provenance: this message arrived from guildhall via opencode"
+)
+
 
 def _connected_now() -> bool:
     return _connected
@@ -168,6 +172,7 @@ class _GuildhallBot:
             "stanza_id": str(msg.get("id", "")),
             "source": "guildhall",
             "transport": "xmpp-muc",
+            "provenance": GUILDHALL_PROVENANCE_STAMP,
             "room": str(getattr(sender, "bare", "")),
             "from": str(sender),
             "body": str(msg["body"]),
@@ -196,6 +201,7 @@ class _GuildhallBot:
             "stanza_id": str(msg.get("id", "")),
             "source": "guildhall",
             "transport": "xmpp-direct",
+            "provenance": GUILDHALL_PROVENANCE_STAMP,
             "delivery": "direct",
             "reply_to": str(getattr(sender, "bare", sender)),
             "room": f"dm:{getattr(sender, 'bare', sender)}",

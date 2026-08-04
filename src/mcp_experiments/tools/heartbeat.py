@@ -221,7 +221,11 @@ def _dispatch(events: list[HeartbeatEvent]) -> None:
 
 def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
     """Process room batches through the shared transport-independent lifecycle."""
-    from .guildhall import acknowledge_message_ids, send_message_sync
+    from .guildhall import (
+        GUILDHALL_PROVENANCE_STAMP,
+        acknowledge_message_ids,
+        send_message_sync,
+    )
     from .memory import memory_ingest
     from .opencode_bridge import reply
 
@@ -316,7 +320,10 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
                 experience_mode="heartbeat",
                 historical_status="confirmed",
                 recorded_during="heartbeat",
-                provenance_note="Captured by autonomous event-driven chat cycle",
+                provenance_note=(
+                    f"{GUILDHALL_PROVENANCE_STAMP}; "
+                    "captured by autonomous event-driven chat cycle"
+                ),
                 source="heartbeat",
             ))
             parsed = json.loads(result)
