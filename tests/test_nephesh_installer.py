@@ -29,6 +29,9 @@ class InstallerUnitTests(unittest.TestCase):
         self.assertIn("EnvironmentFile=-/home/example/nephesh/config/nephesh.env", text)
         self.assertNotIn("/etc/systemd/system", text)
 
+    def test_unit_is_not_a_system_unit(self) -> None:
+        self.assertNotIn("WantedBy=multi-user.target", unit_text(Path("/home/example/nephesh")))
+
     def test_empty_new_root_does_not_create_recursive_backup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "nephesh"

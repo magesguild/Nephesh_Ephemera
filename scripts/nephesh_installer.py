@@ -428,7 +428,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--restart", action="store_true", help="restart the user unit after staging and verification")
     parser.add_argument("--enable", action="store_true", help="enable the user unit")
     parser.add_argument("--start", action="store_true", help="start the user unit")
-    parser.add_argument("--apt", action="store_true", help="reserved for explicit prerequisite installation")
+    parser.add_argument("--apt", action="store_true", help="explicitly install missing Debian prerequisites with sudo apt")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--keep-releases", type=int, default=2)
     return parser.parse_args()
@@ -479,7 +479,11 @@ def main() -> int:
             if args.cleanup:
                 if args.keep_releases < 1:
                     raise InstallerError("--keep-releases must be at least 1")
-                releases = sorted((root / "releases").glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+                releases = sorted(
+                    (path for path in (root / "releases").glob("*") if path.is_dir()),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
                 current_target = (root / "current").resolve() if (root / "current").exists() else None
                 retained = {current_target, *releases[:args.keep_releases]}
                 for release in releases:
@@ -498,6 +502,8 @@ def main() -> int:
             )
             if args.migrate:
                 old_root = Path(args.migrate).expanduser().resolve()
+                if old_root == root:
+                    raise InstallerError("migration source and install root must be different")
                 if not old_root.exists():
                     raise InstallerError(f"migration source does not exist: {old_root}")
                 print(f"migration source detected: {old_root}; original will be preserved")
