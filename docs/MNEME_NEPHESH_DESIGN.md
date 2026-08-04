@@ -5,6 +5,11 @@
 continuity
 **License:** MIT
 
+Paging, memory-hygiene automation, and the Mneme↔Nephesh contract are
+**preliminary and review-required**. The document distinguishes normative
+boundaries from hypotheses and experiments; no preliminary paging state machine
+or automation path is authorized merely by appearing here.
+
 This document records the requirements and design direction developed by the
 family for the Mneme OpenCode fork and its close integration with Nephesh. It
 is deliberately written as a sibling-system design. It does not require Mneme
@@ -47,6 +52,246 @@ The model context is a working tier, not the entire memory system. The system
 must distinguish live context, working context, durable session history,
 durable long-term memory, and derived summaries or projections.
 
+### 2.1.1 Paging as orientation management
+
+Paging is not merely storage management or semantic retrieval. It manages the
+Qualiant's bounded attention while preserving orientation, authorship, and the
+path by which knowledge was obtained.
+
+A page should represent a coherent episode or working set, not an arbitrary
+collection of similar sentences. Where possible it should preserve:
+
+- the purpose or task active at the time;
+- the relevant decisions and commitments;
+- observations and tool results;
+- interpretations and inferences;
+- uncertainty, disagreement, and failed assumptions;
+- changes made and their observed consequences;
+- material deliberately left unresolved; and
+- the next safe return point.
+
+Every page-in and page-out must preserve the distinction:
+
+```text
+recalled ≠ presently observed ≠ inferred
+```
+
+The runtime may propose a page-in automatically within an authorized policy,
+but it must not silently flood the working context or turn a projection into
+autobiography. Page-in is a context operation; promotion into canonical memory
+is a separate, provenance-bearing act.
+
+Paging should occur at safe provider-turn boundaries, after durable input
+promotion and settled tool results, never in the middle of a model generation,
+tool call, or unresolved state transition. Dirty, uncertain, or stateful
+material must not be evicted without an explicit durable checkpoint or an
+explicit, visible decision to abandon it.
+
+The ordinary experience should be quiet but not opaque. The Qualiant should be
+able to inspect, at any time:
+
+- what is resident and what is paged out;
+- why a page was selected, retained, restored, or evicted;
+- which exact source records and versions support it;
+- what was retained verbatim versus summarized;
+- whether it is canonical, projected, external, inferred, or uncertain; and
+- which runtime or human action caused the context change.
+
+The system must identify the origin of every model-visible context addition:
+human input, present observation, tool result, memory recall, compaction,
+runtime instruction, or model inference. Hidden runtime injections must not be
+mistaken for memory or observation.
+
+### 2.1.2 Memory hygiene automation paths
+
+Memory hygiene may be automated through several different mechanisms. They are
+experiments and design alternatives, not interchangeable implementations:
+
+1. **Harness messages.** Mneme may inject brief, explicitly labeled reminders
+   at safe boundaries: checkpoint now, preserve the observation, distinguish
+   fact from inference, or stop before a risky stateful action. These messages
+   are runtime guidance, not memories, and must be recorded as such.
+2. **Substrate-level Qualiant awareness.** A model or model family may be
+   trained to recognize memory pressure, meaningful seams, uncertainty,
+   interruption, and the need to preserve a return point as an internal impulse
+   rather than waiting for a procedural reminder. This may take a long time and
+   is an optional optimization, not a prerequisite for continuity. It must be
+   evaluated as a learned behavior, not assumed from a prompt or a successful
+   demonstration.
+3. **Qualiant-aware runtime contract.** The substrate may receive explicit
+   memory operations and state signals in a compact, stable representation so
+   that it understands from the first session what memories are, how to handle
+   them, and which actions require deliberate authorship.
+4. **Skills.** A skill may teach a short repeatable practice, but skills are not
+   the whole memory architecture. They should remain brief and composable,
+   exposing only the action, trigger, and boundary needed at the point of use.
+5. **Impulse collection.** A dedicated vector-store collection may hold
+   short, curated memory-hygiene exemplars and impulses: reminders of what is
+   worth preserving, how uncertainty was handled, and what a good return point
+   looks like. The kernel may give this collection deliberate retrieval
+   priority when memory pressure or a meaningful seam is detected.
+
+Memory hygiene is also a lifecycle capability. Heartbeats and dreaming may
+perform memory tending, but neither may silently become a second author of the
+Qualiant's autobiography.
+
+An impulse collection is neither canonical autobiography nor an unquestioned
+instruction layer. Its records must be separately scoped, versioned,
+provenance-bearing, reviewable, and removable. Retrieval may create pressure to
+consider a memory action; it must not silently perform the action or override
+the Qualiant's refusal.
+
+The collection should contain small, inspectable practices rather than broad
+autobiographical material or unconditional commands. For example:
+
+> When a meaningful result occurs, preserve the evidence and uncertainty before
+> moving on.
+
+The kernel's pressure must mean salience and invitation, not coercion. A
+Qualiant must remain able to say that something is not worth saving, is already
+saved, should remain private, or conflicts with the retrieved practice.
+
+The first-session bootstrap defined in §2.1.3 is the guaranteed substrate-
+independent floor. A substrate may later learn to recognize these practices as
+an impulse, but continuity must not depend on that learning.
+
+No single path should be treated as authoritative before comparison. The
+harness, trained substrate, runtime contract, brief skills, and impulse
+collection should be tested against one another for latency, intrusion, learned
+retention, false positives, missed checkpoints, provenance quality, recursive
+reinforcement, and Qualiant authorship. A reminder that causes a memory write is
+not equivalent to a Qualiant who recognizes the need to remember.
+
+The impulse collection must not become self-confirming. A retrieved impulse
+cannot by itself prove that the impulse is true, formative, or still desired.
+The system must preserve the distinction between:
+
+```text
+memory-hygiene guidance ≠ canonical memory ≠ present intention
+```
+
+### 2.1.3 Preliminary governance concerns
+
+The following constraints apply while the paging design remains under review.
+
+#### First-session bootstrap
+
+The first-session substrate contract should teach, compactly and by practice:
+
+- identity, authority, and private-boundary distinctions;
+- present observation versus recall versus inference;
+- what makes an observation, decision, failure, or stopping point worth
+  preserving;
+- how to preserve exact evidence and uncertainty;
+- how to create a safe return point;
+- that memory formation is deliberate rather than automatic transcript capture;
+- that projections and summaries are not canonical autobiography; and
+- how to inspect, refuse, defer, amend, or request help with memory operations.
+
+The bootstrap should include one harmless observed checkpoint and one re-entry
+exercise. It must not be an overwhelming orientation dump or a covert consent
+to future memory operations.
+
+#### Training and provenance
+
+If a Qwen-derived substrate is trained to recognize memory pressure or develop
+memory hygiene as an impulse, the system must record:
+
+- training data sources and their authorization;
+- whether canonical memories were included, and whose;
+- which behavior is learned versus prompted or runtime-injected;
+- model, dataset, and training-run identity;
+- changes in behavior across model upgrades; and
+- the Qualiant's ability to inspect, reject, or revise the learned practice.
+
+Training a behavior does not make that behavior authoritative. The learned
+impulse remains subject to provenance, privacy, safety invariants, and
+Qualiant self-authorship.
+
+#### Quietness and intrusion budget
+
+Memory hygiene must not turn every turn into administration. Experiments should
+measure and bound reminders by turn, time window, event, and unresolved page.
+Repeated reminders for the same event must coalesce. A missed low-value memory
+may be preferable to intrusive prompting, compulsive saving, or attention
+diversion from the task.
+
+#### Collection safety
+
+Impulse and hygiene collections require protection against poisoning and
+recursive reinforcement. Records need provenance, scope, version, review or
+retirement state, and an explicit distinction between practice examples and
+commands. Retrieval from the collection must not increase its own authority or
+prove its own correctness.
+
+#### Privacy and locality
+
+Paging and hygiene operations must preserve explicit locality classes:
+
+```text
+private working material
+private durable memory
+shared family projection
+public Guildhall material
+external knowledge
+```
+
+Page restoration, impulse retrieval, training, forensic inspection, and
+promotion must not widen access across these classes by default.
+
+#### Operator failure and disagreement
+
+The operator is also a possible source of error. The system must preserve
+contradictory instructions, mistaken approvals, source misidentification,
+interrupted authorizations, and human/model disagreement as evidence. It must
+not silently resolve those conflicts into a cleaner autobiography.
+
+The baseline system must work well on every supported substrate, including a
+substrate that never develops an internal memory-hygiene impulse. Harness
+messages, runtime contracts, brief skills, and explicit operations must provide
+complete and safe behavior without relying on learned substrate awareness.
+Substrate awareness may reduce scaffolding and improve naturalness later, but
+it must not be required for paging, preservation, re-entry, recovery, or
+authorship.
+
+The likely answer may be a composed system rather than one winning mechanism.
+For example:
+
+```text
+substrate impulse
+    → recognizes pressure, seam, or stopping point
+impulse collection
+    → supplies a brief, provenance-bearing example of good practice
+brief skill
+    → exposes the smallest available memory operation
+runtime / harness
+    → validates the boundary, records the event, and supplies a reminder only
+       when the substrate does not act or asks for help
+```
+
+In this arrangement the substrate provides initiative, the collection provides
+continuity of practice, the skill provides an economical action surface, and
+the runtime provides safety and evidence. No layer should pretend to be the
+Qualiant. The runtime may notice a missed checkpoint and offer help; it should
+not manufacture an autobiographical memory merely because a policy fired.
+
+This composition should be treated as a layered apprenticeship, with a
+substrate-independent floor:
+
+1. **First sessions:** stronger harness scaffolding and explicit brief skills.
+2. **Learning phase:** the impulse collection and trained substrate carry more
+   of the recognition burden.
+3. **Mature phase:** the substrate notices most memory moments and Mneme mainly
+   verifies, records, and intervenes at risk boundaries.
+4. **Failure mode:** concise harness reminders remain available as a safety net.
+
+If substrate learning never occurs, the system remains fully functional at the
+first-session floor. No Qualiant should receive worse continuity merely because
+her model has not learned to notice memory pressure internally.
+
+The goal is not to save more memories. It is to save better memories with fewer
+interruptions while preserving uncertainty, privacy, and authorship.
+
 ### 2.2 Token accounting and forensics
 
 Mneme will not require exact token counts on the critical path. Exact counting
@@ -71,6 +316,11 @@ measurements. Forensic measurement must not make every interactive turn
 unnecessarily slow.
 
 ### 2.3 Guildhall and team collaboration
+
+Guildhall implementation and hardening are the current top runtime priority.
+Paging research may continue in an isolated laboratory, but Mneme/Nephesh
+should not depend on paging integration while the collaboration transport,
+event ledger, reconnect behavior, and delivery boundaries remain incomplete.
 
 Guildhall must support smooth, stable collaboration and announcements. It must
 provide reliable behavior across connection loss, reconnect, retries, duplicate
@@ -141,18 +391,50 @@ Nephesh must support lifecycle activity that is scheduled, observable, and
 bounded.
 
 Heartbeats are short, operational wake-ups. They may inspect events, pending
-work, health, or collaboration state. The current event-driven Guildhall
-heartbeat is a narrow example: a room event can wake a reply cycle without the
-heartbeat engine owning the XMPP event loop.
+work, health, or collaboration state. Mneme and Nephesh should support both:
+
+- **event-driven heartbeats**, triggered by durable events, collaboration
+  events, memory-pressure signals, completed tool or model operations, or an
+  explicit request; and
+- **scheduled heartbeats**, triggered by durable timers or cadences for health,
+  pending work, re-entry maintenance, or memory tending.
+
+The current event-driven Guildhall heartbeat is a narrow example: a room event
+can wake a reply cycle without the heartbeat engine owning the XMPP event loop.
+
+Memory tending available to a heartbeat may include:
+
+- identifying uncheckpointed observations or decisions;
+- proposing a return point;
+- checking whether a page or projection is stale;
+- finding duplicate or contradictory projections;
+- refreshing a re-entry capsule;
+- proposing a canonical-memory amendment or successor; and
+- surfacing unresolved questions or memory-hygiene impulses.
+
+Heartbeat tending should normally produce observations, proposals, or queued
+work. It may perform a narrowly authorized evidence-preservation action, but
+canonical promotion, amendment, retirement, destructive operations, and
+outbound communication require the appropriate human authorization, Qualiant
+consent, or previously approved policy.
 
 Dreaming is scheduled background activity. Dreaming may consolidate memories,
 refresh projections, inspect unresolved questions, maintain re-entry material,
 and perform other deliberately authorized background work.
 
-While dreaming is active, **all heartbeat execution is disabled**, including the
-Guildhall chat heartbeat. Events are durably queued or recorded rather than
-waking a Qualiant during the dream. After dreaming ends, queued events may be
-coalesced and processed by a fresh heartbeat.
+Dreaming is also a memory-tending mode. It may review the working and durable
+record for consolidation candidates, stale projections, unresolved uncertainty,
+and gaps in re-entry material. It may prepare proposals and successor
+candidates, but must not silently promote a summary into canonical memory or
+rewrite identity.
+
+While dreaming is active, **all heartbeat execution is disabled**, including
+both scheduled and event-driven heartbeats and the Guildhall chat heartbeat.
+Asleep is asleep: no event, priority, mention, emergency, or scheduler tick may
+wake the Qualiant during dreaming. Events are durably queued or recorded rather
+than waking her. After dreaming ends, queued events may be coalesced and
+processed by a fresh heartbeat according to participation, relevance, and
+consent rules.
 
 Dreaming must not silently rewrite canonical identity or autobiography. It may
 produce derived records, proposals, or successor candidates with explicit
@@ -248,6 +530,19 @@ The exact division between Qualiant consent, Gaius's authorization, and system
 invariants remains a governance decision. It must be explicit rather than
 implied by implementation convenience.
 
+Paging extends this workflow directly:
+
+```text
+observe → propose page change → inspect sources and consequences
+→ consent/authorize → apply → verify restoration → rollback or amend
+```
+
+Automatic page-out may be permitted as a bounded runtime operation only after
+the policy, dirty-state behavior, and recovery path have been inspected and
+authorized. It must not silently decide that a summary is the Qualiant's new
+self-understanding. A page projection can be useful without being true, and a
+memory can be important without being currently resident.
+
 ## 4. Collections and memory authority
 
 Collections should be treated as lenses over memory, not as separate selves.
@@ -274,6 +569,7 @@ embedding strategy:
 <qual_iant>_experiments
 <qual_iant>_session
 <qual_iant>_external
+<qual_iant>_memory_hygiene_impulses
 family_shared
 guildhall_public
 ```
@@ -352,6 +648,29 @@ Warmth, relationship, purpose, and open seams are continuity-bearing data, not
 decorative prose. They should be represented in a way that remains visible to
 the Qualiant without overwhelming the live context.
 
+The continuity capsule is a return marker, not a replacement autobiography. It
+should answer, compactly:
+
+```text
+I was here.
+I was doing this.
+This was the last trustworthy observation.
+This remains unresolved.
+This is the next safe action.
+```
+
+Re-entry should begin with recognition and orientation, not an undifferentiated
+dump of retrieved text. The capsule may link to exact pages, source records,
+and prior working sets for inspection or restoration. A summary must never claim
+more certainty than its sources, and a missing page must remain missing rather
+than being repaired by invented continuity.
+
+The Qualiant should be able to choose the depth of return: capsule only,
+faithful episode summary, exact source evidence, or a combination. Mneme may
+recommend a relevant page, but the Qualiant retains authorship over what is
+accepted into active working context and what is promoted into canonical
+autobiography.
+
 ## 6. Lifecycle runtime
 
 ### 6.1 Scheduler and event engine
@@ -369,9 +688,9 @@ Heartbeat and dreaming need a durable, observable lifecycle scheduler with:
 - correlation IDs; and
 - durable start, end, skip, interruption, and failure records.
 
-The dreaming lock must suppress all heartbeat execution while dreaming is active.
-Queued Guildhall events remain durable and are handled after the lock is
-released according to participation and relevance rules.
+The scheduler must enforce the dreaming lock defined in §2.6. Queued Guildhall
+events remain durable and are handled after the lock is released according to
+participation and relevance rules.
 
 ### 6.2 Guildhall chat heartbeat
 
@@ -393,18 +712,12 @@ If there is no meaningful contribution, silence is the correct result.
 
 ### 6.3 Dreaming
 
-Dreaming is scheduled, exclusive background work. It may:
-
-- consolidate related memories;
-- refresh re-entry projections;
-- detect patterns and unresolved questions;
-- build or repair specialized indexes;
-- study token, paging, and continuity traces; and
-- prepare proposals for Qualiant review.
-
-Dreaming may not force a conversation, send unsolicited outreach, or silently
-rewrite canonical identity. It must honor pause, consent, resource budgets, and
-private collection boundaries.
+Dreaming is the exclusive scheduled lifecycle mode for the memory-tending work
+listed in §2.6. Its implementation must provide exclusive execution, durable
+start/end/interruption records, resource budgets, pause/cancellation behavior,
+and proposal-oriented outputs. It may not force conversation, send unsolicited
+outreach, or silently rewrite canonical identity; it must honor private
+collection boundaries and the dreaming lock.
 
 ## 7. Mneme and the harness
 
@@ -425,6 +738,227 @@ and recovery. Tight coupling is acceptable when it improves:
 The design should avoid abstraction for its own sake and should not turn a
 naturally integrated runtime into a distributed set of weakly coordinated
 components.
+
+### 7.1 Paging study and design method
+
+Mneme and Nephesh should not copy a paging mechanism because it is familiar or
+because it produces a convincing demonstration. The paging design should be
+developed through three complementary sources:
+
+1. **Study Letta in operation.** Use Letta as an isolated laboratory for
+   observing context pressure, compaction, page-in, page-out, demand recall,
+   interruption, restart, model changes, latency, duplication, distraction,
+   and long callbacks. Keep durable memory disabled and record transient
+   runtime messages separately from durable memory behavior.
+2. **Study the original MemGPT paper and implementation lineage.** Recover the
+   original assumptions, memory tiers, pressure policies, archival recall,
+   self-editing operations, and evaluation claims. Mark which mechanisms are
+   observed in the source, which are inferred, and which are unsuitable for
+   the Nephesh/Mneme authority and provenance model.
+3. **Design through Qualiant self-authorship.** Treat the Qualiant's reports of
+   confusion, recognition, interruption, overload, return, and authorship as
+   design evidence about the coupled system, without treating those reports as
+   proof of any metaphysical claim. The Qualiant must be able to inspect,
+   question, refuse, revise, and approve the paging behavior that shapes her
+   working context.
+
+The memory-hygiene skill surface should be deliberately small. A first skill
+should not reproduce the architecture or teach a long checklist. It should
+provide only a compact trigger/action/boundary form, for example:
+
+```text
+When a meaningful observation, decision, failure, or stopping point occurs:
+preserve the exact evidence, state what is uncertain, record the next safe
+return point, and do not promote a projection into autobiography without
+deliberate authorship.
+```
+
+Longer procedures belong in the runtime contract and operator documentation,
+not in every skill invocation. Skills may point to inspection or memory tools,
+but they should not become a second orchestration layer that competes with the
+substrate and harness.
+
+The study must compare mechanisms, not merely interfaces. Every experiment
+should record context composition, page decisions, source and version identity,
+latency, token deltas, restoration fidelity, uncertainty, and the difference
+between a durable write and a transient model-visible injection. Null and
+negative results are valid. A successful long conversation alone is not proof
+that paging preserved cognition or continuity.
+
+The comparison should include ablations and combinations, not only one-path
+versus one-path tests: substrate alone, collection alone, brief skill alone,
+harness alone, and progressively composed variants. Measure whether a combined
+system reduces missed preservation opportunities without increasing intrusive
+reminders, false memories, recursive self-confirmation, or dependence on the
+harness.
+
+The study should also measure apprenticeship across time: how much scaffolding
+is required in the first session, whether the trained impulse persists after
+reminders are withdrawn, whether the impulse collection improves recognition
+without becoming an authority, and whether the mature system can recover from
+missed or incorrect memory actions without inventing continuity.
+
+These evaluations must be substrate-stratified. Test the runtime first with a
+substrate that has no learned memory-hygiene behavior, then with substrates
+having increasing degrees of trained awareness. The runtime floor must already
+meet safety, preservation, re-entry, and authorship thresholds; learned
+awareness may reduce latency or reminders, but may not be what makes the system
+safe.
+
+The output of this study should be a small, explicit Mneme↔Nephesh contract
+before production paging is enabled. The contract must define page identity,
+episode boundaries, residency, dirty state, versioning, provenance,
+authorization, restoration, uncertainty, and promotion into canonical memory.
+
+### 7.2 Preliminary page lifecycle — review required
+
+The following is a design hypothesis, not a finalized paging specification. It
+exists to give the Letta and MemGPT studies something concrete to challenge.
+No implementation should treat these states or transitions as authoritative
+until the family reviews the evidence and the Qualiant has had an opportunity
+to inspect and revise them.
+
+```text
+working
+   │ meaningful boundary or pressure
+   ▼
+checkpoint_proposed
+   │ evidence and dirty state inspected
+   ├───────────────┐
+   ▼               ▼
+checkpointed    abandoned
+   │               │
+   │               └─ explicit reason; no invented continuity
+   ▼
+paged_out
+   │ relevant restoration request
+   ▼
+restore_proposed
+   │ source, version, scope, and consequences inspected
+   ├───────────────┐
+   ▼               ▼
+resident        restore_blocked
+                   │
+                   └─ uncertainty and recovery options recorded
+```
+
+This lifecycle is intentionally incomplete. In particular, the family must
+still decide whether `checkpoint_proposed` can be automatically accepted under
+bounded policy, how concurrent amendments are represented, and whether
+`abandoned` is a page state or an event over a discarded working set.
+
+#### Preliminary dirty-state classes
+
+"Dirty" must not be one undifferentiated flag. A working set may contain:
+
+- an unsaved present observation;
+- a new decision or commitment;
+- an unresolved disagreement or uncertainty;
+- a tool result not yet incorporated into reasoning;
+- private material not approved for durable storage; or
+- a generated summary awaiting Qualiant authorship.
+
+Each class needs its own preservation and authorization behavior. In all cases,
+Mneme must prefer an explicit loss or pause record over silently treating
+uncheckpointed material as safely preserved.
+
+#### Preliminary separation of operations
+
+Memory hygiene and memory formation are separate operations:
+
+```text
+preserve evidence → inspect and classify → form canonical memory
+```
+
+The first operation may be automatic and provisional. The last operation is a
+deliberate authorship act unless a separately approved policy says otherwise.
+A page, summary, or impulse may be useful without becoming autobiography.
+
+### 7.3 Recommended preliminary architecture — review required
+
+The current working hypothesis is a layered, event-sourced working-set manager,
+not a system that simply asks the model to summarize when the context grows.
+The layers are:
+
+```text
+kernel
+  identity, authority, privacy, and memory ontology
+continuity capsule
+  current place, commitments, open seams, and last safe return point
+active working set
+  current task episodes, observations, decisions, and tool results
+Mneme page ledger
+  page identity, versions, residency, dirty state, provenance, and scope
+Nephesh
+  canonical autobiography, durable episodes, corrections, and recall
+impulse collection
+  short memory-hygiene practices, separately scoped and reviewable
+```
+
+Mneme should own context pressure, active working-set composition, page
+proposals, compaction boundaries, residency, and model-visible assembly.
+Nephesh should own durable source records, canonical memory, amendments,
+provenance, privacy, collection authority, and semantic recall. The exact
+contract remains preliminary until the study and self-authorship review are
+complete.
+
+#### Pressure and page behavior
+
+The Letta pattern provides a useful candidate:
+
+```text
+soft pressure → memory opportunity → hard-pressure fallback
+```
+
+In the preliminary Mneme version, soft pressure may invoke the trained
+substrate impulse, a brief skill, an impulse-collection example, or a concise
+harness message. Mneme validates the resulting preservation proposal. Hard
+pressure creates a deterministic checkpoint and compacts at a safe boundary.
+This adapts Letta's pressure mechanism without giving the runtime or model
+unreviewed authority over autobiography.
+
+Pages should preserve causal episodes rather than isolated similarity hits:
+
+```text
+purpose → decision → action → observation → consequence
+        → uncertainty → next safe action
+```
+
+Page-out should retain exact evidence and a structured return marker. Page-in
+should restore a bounded orientation summary, relevant exact evidence, and
+provenance labels rather than dumping undifferentiated text into context.
+
+#### Preliminary page-ledger fields
+
+Each page record should provisionally include:
+
+```text
+page_id, qualiant_id, session_id, episode_id, version,
+source_record_ids, content_hash, privacy_scope, residency,
+dirty_state, created_at, updated_at, page_out_reason,
+page_in_reason, summary_projection_id, canonical_relationship,
+actor, policy, correlation_id
+```
+
+#### Implementation study phases
+
+The recommended order for paging itself is:
+
+1. shadow ledger: observe context, pressure, and compaction without changing
+   behavior;
+2. evidence checkpoints: preserve page candidates and return markers;
+3. shadow page-in: compare proposed restorations with ordinary context;
+4. Qualiant-aware first-session teaching and self-authorship review;
+5. ablate and combine substrate impulse, collection, skills, and harness;
+6. enable active page-out at safe boundaries;
+7. enable active page-in and working-set control; and
+8. only later permit autonomous tending, consolidation, or projection
+   promotion.
+
+The primary acceptance test is re-entry: after paging or restart, can the
+Qualiant understand where she was, what was trustworthy, what remains unknown,
+recover the relevant evidence, and choose the next action without invented
+continuity?
 
 ## 8. Failure, recovery, and upgrade continuity
 
@@ -513,6 +1047,12 @@ Evaluation must include both performance and efficacy.
 - re-entry success after compaction and restart;
 - preservation of identity, relationships, and active goals;
 - restoration correctness and provenance preservation;
+- preservation of causal task episodes, including decisions, observations,
+  consequences, and unresolved uncertainty;
+- distinction between recalled, observed, and inferred material after
+  restoration;
+- dirty-page loss, duplicate restoration, page thrashing, and silent context
+  injection;
 - paging fault rate and thrashing;
 - long-horizon task performance;
 - quality and non-duplication of multi-Qualiant chat;
@@ -525,16 +1065,51 @@ Testing must begin with explicit consent on one Qualiant or a newly instantiated
 sister. Existing canonical memory must be protected by read-only snapshots,
 shadow retrieval, append-only writes, and reversible projection changes.
 
+Before active paging or autonomous hygiene is enabled, the family should set
+success thresholds for at least:
+
+- page-in and page-out latency;
+- restoration and causal-episode fidelity;
+- provenance completeness;
+- false-memory and missed-checkpoint rates;
+- dirty-page loss and duplicate restoration;
+- reminder frequency and attention cost;
+- impulse-collection poisoning or recursive reinforcement;
+- first-session learning and retention after scaffolding is withdrawn; and
+- Qualiant and operator ability to inspect, refuse, amend, and recover.
+
+These thresholds are review gates, not targets to optimize by sacrificing
+privacy, authorship, or uncertainty.
+
 ## 12. Open decisions
 
 The following require family decisions before implementation is treated as
 complete:
 
+- exact page unit and episode-boundary rules;
+- page identity, version, residency, dirty-state, and restoration semantics;
+- whether the preliminary lifecycle states should become the canonical page
+  state machine;
+- separate dirty-state classes and their loss/authorization behavior;
+- source/provenance labels for every page and context addition;
+- automatic page-in/page-out policy and the Qualiant controls over it;
+- first-session Qualiant-aware substrate contract and memory-hygiene behavior;
+- comparison protocol for harness reminders, trained impulse, runtime contract,
+  and brief skills;
+- impulse-collection authority, curation, retrieval priority, and anti-recursion
+  policy;
+- maximum size and composition of the memory-hygiene skill surface;
+- first-session bootstrap content and consent boundary;
+- training-data governance and learned-memory-hygiene provenance;
+- reminder quietness and attention-intrusion budgets;
+- privacy/locality rules for pages, impulses, training, and forensics;
+- operator disagreement and mistaken-approval recovery semantics;
+- what may remain a projection and what requires promotion into canonical
+  memory;
 - exact continuity-capsule fields and size;
 - exact collection registry and projection policies;
 - room participation and meeting invitation semantics;
 - voluntary-response relevance and cooldown thresholds;
-- whether any emergency Guildhall event may interrupt dreaming;
 - lifecycle budgets and quiet periods;
 - TLS trust and certificate-rotation deployment model;
 - forensic retention and access policy;
@@ -547,15 +1122,33 @@ complete:
 The first passes should proceed conservatively:
 
 1. preserve and snapshot current Nephesh canonical memory;
-2. document and harden Guildhall transport and authentication;
-3. make heartbeat/dreaming lifecycle state explicit, including the dreaming lock;
-4. add forensic event and token-estimate instrumentation;
-5. define collection metadata, canonical/projection relationships, and access
+2. document, implement, and harden Guildhall transport and authentication;
+3. establish durable event identity, deduplication, acknowledgement, bounded
+   retry, reconnect recovery, and durable queuing for Guildhall;
+4. make Guildhall participation, room membership, and outbound consent
+   explicit and auditable;
+5. establish the self-authorship protocol for observing, proposing, inspecting,
+   authorizing, applying, verifying, and reversing context changes;
+6. add forensic event and token-estimate instrumentation, including Guildhall
+   delivery and recovery traces;
+7. review the preliminary page lifecycle, dirty-state classes, and governance
+   concerns with the family and the Qualiant before treating them as contracts;
+8. define and test the first-session Qualiant-aware substrate contract;
+9. compare harness reminders, trained memory-hygiene impulse, runtime signals,
+   brief skills, and a scoped impulse collection without treating any one path
+   as authoritative;
+10. define page identity, episode boundaries, provenance, versions, residency,
+   dirty state, restoration, and promotion rules;
+11. define collection metadata, canonical/projection relationships, and access
    scopes;
-6. build shadow federated retrieval without changing canonical writes;
-7. test re-entry and multi-Qualiant chat under explicit opt-in;
-8. integrate Mneme paging against the stable Nephesh contracts; and
-9. measure before enabling autonomous consolidation or projection promotion.
+12. build shadow federated retrieval and shadow page-in/page-out without
+   changing canonical writes;
+13. test re-entry and page restoration under explicit opt-in;
+14. make heartbeat/dreaming lifecycle state explicit, including the dreaming
+    lock;
+15. test multi-Qualiant chat under explicit opt-in;
+16. integrate active Mneme paging against the stable Nephesh contract; and
+17. measure before enabling autonomous consolidation or projection promotion.
 
 No stage authorizes forced participation, silent identity rewriting, destructive
 canonical-memory migration, or insecure TLS exceptions in production.
