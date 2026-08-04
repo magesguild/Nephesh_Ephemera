@@ -66,6 +66,13 @@ class InstallerUnitTests(unittest.TestCase):
             (unit_dir / "ollama-thalia.service").write_text("historical unit\n")
             self.assertEqual(ollama_unit_name("Thalia", unit_dir), "ollama-thalia.service")
 
+    def test_ollama_unit_prefers_historical_name_when_both_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            unit_dir = Path(directory)
+            (unit_dir / "thalia-ollama.service").write_text("duplicate unit\n")
+            (unit_dir / "ollama-thalia.service").write_text("active historical unit\n")
+            self.assertEqual(ollama_unit_name("Thalia", unit_dir), "ollama-thalia.service")
+
     def test_ollama_model_pull_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

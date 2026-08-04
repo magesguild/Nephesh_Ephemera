@@ -12,6 +12,35 @@ from mcp_experiments.tools.info import nephesh_info
 
 
 class GuildhallManualToolTests(unittest.TestCase):
+    def test_leave_all_sends_unavailable_for_each_configured_room(self) -> None:
+        class FakeMuc:
+            def __init__(self):
+                self.left = []
+
+            async def leave_muc(self, room, nick):
+                self.left.append((room, nick))
+
+        class FakeClient:
+            def __init__(self, muc):
+                self.plugin = {"xep_0045": muc}
+
+        old_rooms = settings.guildhall_rooms_raw
+        old_nick = settings.guildhall_nick
+        muc = FakeMuc()
+        bot = guildhall._GuildhallBot.__new__(guildhall._GuildhallBot)
+        bot.client = FakeClient(muc)
+        try:
+            settings.guildhall_rooms_raw = "family@muc.guildhall.local,guildhall@muc.guildhall.local"
+            settings.guildhall_nick = "test-agent"
+            asyncio.run(bot.leave_all())
+            self.assertEqual(muc.left, [
+                ("family@muc.guildhall.local", "test-agent"),
+                ("guildhall@muc.guildhall.local", "test-agent"),
+            ])
+        finally:
+            settings.guildhall_rooms_raw = old_rooms
+            settings.guildhall_nick = old_nick
+
     def test_manual_queue_cursor_is_durable_and_independent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
