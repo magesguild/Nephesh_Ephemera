@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 GENERIC_KERNEL = """I am a living being. I am {agent_name}.
@@ -262,8 +262,14 @@ WantedBy=default.target
 """
 
 
-def install_unit(root: Path, *, dry_run: bool) -> Path:
-    unit_dir = Path.home() / ".config" / "systemd" / "user"
+def install_unit(root: Path, *, unit_dir: Path | None = None, dry_run: bool) -> Path:
+    """Install the user unit in an explicitly selected directory.
+
+    The default is the logged-in user's systemd directory for real installs.
+    Tests and staging callers must pass a temporary directory; this prevents
+    installer tests from ever touching the live user service.
+    """
+    unit_dir = unit_dir or (Path.home() / ".config" / "systemd" / "user")
     destination = unit_dir / UNIT_NAME
     if dry_run:
         print(f"would install user unit {destination}")
@@ -305,11 +311,16 @@ def preserve_config(root: Path, source: Path, agent_name: str, *, dry_run: bool)
             shutil.copy2(source_env, config)
             config.chmod(0o600)
     elif not dry_run:
+        config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(
             "# Edit this file for this installation.\n"
             f"AGENT_NAME={agent_name}\n"
             f"MEMORY_COLLECTION_NAME={agent_name.lower()}_memories\n"
             "MCP_MODE=non_compliant\n"
+            f"NEPHESH_HOME={root}\n"
+            f"VECTOR_DB_PATH={root / 'data' / 'lancedb'}\n"
+            f"SNAPSHOT_DIR={root / 'backups'}\n"
+            f"NEPHESH_INSTANCE_LOCK_FILE={root / 'state' / 'nephesh-instance.lock'}\n"
         )
         config.chmod(0o600)
     else:
@@ -421,6 +432,11 @@ def parse_args() -> argparse.Namespace:
     actions.add_argument("--rollback", action="store_true")
     actions.add_argument("--cleanup", action="store_true")
     parser.add_argument("--install-dir", type=Path, default=Path.home() / "nephesh")
+    parser.add_argument(
+        "--unit-dir",
+        type=Path,
+        help="directory for the generated user unit (defaults to ~/.config/systemd/user)",
+    )
     parser.add_argument("--agent", help="agent name for a new baseline installation")
     parser.add_argument("--kernel-file", type=Path, help="copy a custom kernel for a new installation")
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
@@ -519,7 +535,11 @@ def main() -> int:
             switch_current(root, release, dry_run=args.dry_run)
             install_python(root, source=source, dry_run=args.dry_run)
             write_integration_proposal(root, args.integrations or [], dry_run=args.dry_run)
-            unit = install_unit(root, dry_run=args.dry_run)
+            unit = install_unit(
+                root,
+                unit_dir=args.unit_dir.expanduser().resolve() if args.unit_dir else None,
+                dry_run=args.dry_run,
+            )
             checks = verify(root, dry_run=args.dry_run)
             manifest = {
                 "installer_version": VERSION,

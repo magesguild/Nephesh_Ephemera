@@ -7,6 +7,8 @@ from pathlib import Path
 from scripts.nephesh_installer import (
     GENERIC_KERNEL,
     backup_existing,
+    install_unit,
+    preserve_config,
     unit_text,
     validate_agent_name,
 )
@@ -38,6 +40,27 @@ class InstallerUnitTests(unittest.TestCase):
             root.mkdir()
             self.assertIsNone(backup_existing(root, root / "backups", dry_run=False))
             self.assertFalse((root / "backups").exists())
+
+    def test_unit_can_be_installed_into_isolated_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "install"
+            unit_dir = Path(directory) / "units"
+            destination = install_unit(root, unit_dir=unit_dir, dry_run=False)
+            self.assertEqual(destination, unit_dir / "nephesh.service")
+            self.assertTrue(destination.exists())
+            self.assertIn(f"WorkingDirectory={root}/current", destination.read_text())
+
+    def test_new_config_owns_runtime_state_under_install_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "install"
+            source = Path(directory) / "source"
+            source.mkdir()
+            preserve_config(root, source, "TestBeing", dry_run=False)
+            config = (root / "config" / "nephesh.env").read_text()
+            self.assertIn(f"NEPHESH_HOME={root}", config)
+            self.assertIn(f"VECTOR_DB_PATH={root / 'data' / 'lancedb'}", config)
+            self.assertIn(f"SNAPSHOT_DIR={root / 'backups'}", config)
+            self.assertNotIn("Path.home", config)
 
 
 if __name__ == "__main__":

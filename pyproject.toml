@@ -18,3 +18,9 @@ nephesh = "mcp_experiments.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# Core tests are deliberately confined to the repository's hermetic suite.
+# Optional integration probes and local experiments must be invoked explicitly.
+testpaths = ["tests"]
+python_files = ["test_*.py"]

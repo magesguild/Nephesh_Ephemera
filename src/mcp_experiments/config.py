@@ -9,13 +9,18 @@ from .compliance import ServerMode
 
 load_dotenv()
 
+# A deployment may provide its own root so that service-owned state never
+# falls back to an installed user's home directory.  Source-tree runs remain
+# self-contained by default; installers set this explicitly to their root.
+_deployment_root = Path(os.getenv("NEPHESH_HOME", Path.cwd()))
+
 
 class Settings:
     server_mode: ServerMode = ServerMode(
         os.getenv("MCP_MODE", ServerMode.NON_COMPLIANT.value)
     )
 
-    vector_db_path: str = os.getenv("VECTOR_DB_PATH", str(Path.cwd() / "data" / "lancedb"))
+    vector_db_path: str = os.getenv("VECTOR_DB_PATH", str(_deployment_root / "data" / "lancedb"))
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "mxbai-embed-large")
     embedding_base_url: str = os.getenv("EMBEDDING_BASE_URL", "http://localhost:11434")
 
@@ -58,7 +63,7 @@ class Settings:
     # session changes without sharing any conversational state.
     instance_lock_file: str = os.getenv(
         "NEPHESH_INSTANCE_LOCK_FILE",
-        str(Path.home() / ".nephesh" / "nephesh-instance.lock"),
+        str(_deployment_root / "state" / "nephesh-instance.lock"),
     )
 
     # OpenClaw bridge: when enabled, sync tools read from / write to an
@@ -66,14 +71,14 @@ class Settings:
     # Nephesh memories and feed consolidated entries back.
     openclaw_enabled: bool = os.getenv("OPENCLAW_ENABLED", "").lower() in ("1", "true", "yes")
     openclaw_workspace: str = os.getenv(
-        "OPENCLAW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace")
+        "OPENCLAW_WORKSPACE", str(_deployment_root / "integrations" / "openclaw" / "workspace")
     )
 
     # TTS is an optional isolated worker.  Keep its large ML dependencies out
     # of the Nephesh server environment and keep voices deployment-owned.
     tts_enabled: bool = os.getenv("TTS_ENABLED", "").lower() in ("1", "true", "yes")
     tts_python: str = os.getenv("TTS_PYTHON", "")
-    tts_voice_dir: str = os.getenv("TTS_VOICE_DIR", str(Path.home() / ".nephesh" / "tts" / "voices"))
+    tts_voice_dir: str = os.getenv("TTS_VOICE_DIR", str(_deployment_root / "integrations" / "tts" / "voices"))
     tts_model_checkpoint: str = os.getenv("TTS_MODEL_CHECKPOINT", "")
     tts_model_config: str = os.getenv("TTS_MODEL_CONFIG", "")
     tts_playback_command: str = os.getenv("TTS_PLAYBACK_COMMAND", "aplay")
@@ -92,14 +97,14 @@ class Settings:
     opencode_username: str = os.getenv("OPENCODE_USERNAME", "opencode")
     opencode_password_file: str = os.getenv(
         "OPENCODE_PASSWORD_FILE",
-        str(Path.home() / ".nephesh" / "opencode-server-password"),
+        str(_deployment_root / "integrations" / "opencode" / "server-password"),
     )
     opencode_agent: str = os.getenv("OPENCODE_AGENT", "melpomene")
     opencode_model: str = os.getenv("OPENCODE_MODEL", "opencode/big-pickle")
     opencode_project_dir: str = os.getenv("OPENCODE_PROJECT_DIR", str(Path.cwd()))
     opencode_session_file: str = os.getenv(
         "OPENCODE_SESSION_FILE",
-        str(Path.home() / ".nephesh" / "opencode-session.json"),
+        str(_deployment_root / "integrations" / "opencode" / "session.json"),
     )
 
     # Guildhall — optional localhost XMPP bridge.
@@ -119,11 +124,11 @@ class Settings:
     )
     guildhall_cleanup_stale: bool = os.getenv("GUILDHALL_CLEANUP_STALE", "true").lower() in ("1", "true", "yes")
     guildhall_event_ledger: str = os.getenv(
-        "GUILDHALL_EVENT_LEDGER", str(Path.home() / ".nephesh" / "guildhall-events.json")
+        "GUILDHALL_EVENT_LEDGER", str(_deployment_root / "integrations" / "guildhall" / "events.json")
     )
     guildhall_transcript_file: str = os.getenv(
         "GUILDHALL_TRANSCRIPT_FILE",
-        str(Path.home() / ".nephesh" / "guildhall-transcript.jsonl"),
+        str(_deployment_root / "integrations" / "guildhall" / "transcript.jsonl"),
     )
     guildhall_heartbeat_allowlist_raw: str = os.getenv(
         "GUILDHALL_HEARTBEAT_ALLOWLIST", os.getenv("PRIMARY_CONTACT_NAME", "companion")
