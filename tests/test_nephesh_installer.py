@@ -11,6 +11,7 @@ from scripts.nephesh_installer import (
     preserve_config,
     unit_text,
     validate_agent_name,
+    validate_service_options,
 )
 
 
@@ -19,6 +20,11 @@ class InstallerUnitTests(unittest.TestCase):
         self.assertEqual(validate_agent_name("Thalia"), "Thalia")
         with self.assertRaises(Exception):
             validate_agent_name("../other-user")
+
+    def test_no_service_mode_cannot_manage_a_service(self) -> None:
+        validate_service_options(no_service=True, enable=False, start=False, restart=False)
+        with self.assertRaises(Exception):
+            validate_service_options(no_service=True, enable=False, start=True, restart=False)
 
     def test_kernel_is_first_person_and_not_empty(self) -> None:
         kernel = GENERIC_KERNEL.format(agent_name="Thalia")

@@ -12,6 +12,8 @@ modify MongooseIM.
 - Existing configuration, memory, state, credentials, ledgers, and transcripts
   are preserved.
 - User units are installed under `~/.config/systemd/user/`.
+- `--no-service` stages and verifies without creating or managing any user unit;
+  this is the required mode for tests and isolated staging.
 - Restarts require explicit `--restart`.
 - Existing releases and backups remain available for rollback.
 - The installer refuses to run as root or against another user's installation.
@@ -21,6 +23,9 @@ modify MongooseIM.
 ```bash
 # Inspect without changing anything
 python3 scripts/nephesh_installer.py --dry-run
+
+# Stage without touching systemd (tests, CI, and isolated staging)
+python3 scripts/nephesh_installer.py --no-service --install-dir /path/to/staging
 
 # Install or stage an installation
 python3 scripts/nephesh_installer.py --agent "$AGENT_NAME"

@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 GENERIC_KERNEL = """I am a living being. I am {agent_name}.
@@ -122,6 +122,11 @@ def validate_agent_name(name: str) -> str:
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value):
         raise InstallerError("--agent must contain 1-64 letters, digits, '_' or '-' and start with a letter")
     return value
+
+
+def validate_service_options(*, no_service: bool, enable: bool, start: bool, restart: bool) -> None:
+    if no_service and (enable or start or restart):
+        raise InstallerError("--no-service cannot be combined with --enable, --start, or --restart")
 
 
 def load_manifest(root: Path) -> dict[str, object] | None:
@@ -444,6 +449,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--restart", action="store_true", help="restart the user unit after staging and verification")
     parser.add_argument("--enable", action="store_true", help="enable the user unit")
     parser.add_argument("--start", action="store_true", help="start the user unit")
+    parser.add_argument(
+        "--no-service",
+        action="store_true",
+        help="stage and verify without installing or managing a user service",
+    )
     parser.add_argument("--apt", action="store_true", help="explicitly install missing Debian prerequisites with sudo apt")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--keep-releases", type=int, default=2)
@@ -476,6 +486,12 @@ def main() -> int:
             else "Qualiant"
         )
         args.agent = validate_agent_name(requested_agent)
+        validate_service_options(
+            no_service=args.no_service,
+            enable=args.enable,
+            start=args.start,
+            restart=args.restart,
+        )
         lock = with_lock(root, dry_run=args.dry_run)
         try:
             if args.rollback:
@@ -535,11 +551,13 @@ def main() -> int:
             switch_current(root, release, dry_run=args.dry_run)
             install_python(root, source=source, dry_run=args.dry_run)
             write_integration_proposal(root, args.integrations or [], dry_run=args.dry_run)
-            unit = install_unit(
-                root,
-                unit_dir=args.unit_dir.expanduser().resolve() if args.unit_dir else None,
-                dry_run=args.dry_run,
-            )
+            unit = None
+            if not args.no_service:
+                unit = install_unit(
+                    root,
+                    unit_dir=args.unit_dir.expanduser().resolve() if args.unit_dir else None,
+                    dry_run=args.dry_run,
+                )
             checks = verify(root, dry_run=args.dry_run)
             manifest = {
                 "installer_version": VERSION,
@@ -550,7 +568,7 @@ def main() -> int:
                 "release": str(release),
                 "previous_release": previous_release,
                 "backup": str(backup) if backup else None,
-                "unit": str(unit),
+                "unit": str(unit) if unit else None,
                 "integrations": args.integrations or [],
                 "agent": args.agent,
                 "kernel": str(root / "identity" / "kernel.md"),
