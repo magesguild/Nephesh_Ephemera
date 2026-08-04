@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mcp_experiments.tools.heartbeat import _message_dedupe_key
+from mcp_experiments.tools.heartbeat import _batch_collaborators
 from mcp_experiments.tools.opencode_bridge import (
     GUILDHALL_PROVENANCE_STAMP,
     _format_guildhall_messages,
@@ -43,6 +44,12 @@ class GuildhallHeartbeatTests(unittest.TestCase):
             {"from": "gaius", "body": f"[{GUILDHALL_PROVENANCE_STAMP}] first"},
         ])
         self.assertEqual(already_stamped.count(GUILDHALL_PROVENANCE_STAMP), 1)
+
+    def test_batch_collaborators_expose_batch_protocol_methods(self) -> None:
+        capture, decide, deliver = _batch_collaborators(lambda batch: None, lambda batch: None, lambda batch, body: None)
+        self.assertTrue(callable(capture.capture_batch))
+        self.assertTrue(callable(decide.decide_batch))
+        self.assertTrue(callable(deliver.send_batch))
 
 
 if __name__ == "__main__":

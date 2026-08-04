@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from ..config import settings
@@ -37,6 +38,15 @@ from ..guildhall_lifecycle import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _batch_collaborators(capture_memory: Callable[..., Any], decide_reply: Callable[..., Any], deliver_reply: Callable[..., Any]) -> tuple[object, object, object]:
+    """Adapt heartbeat callbacks to the batch lifecycle protocol."""
+    return (
+        SimpleNamespace(capture_batch=capture_memory),
+        SimpleNamespace(decide_batch=decide_reply),
+        SimpleNamespace(send_batch=deliver_reply),
+    )
 
 
 @dataclass(frozen=True)
@@ -359,12 +369,11 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
             if not send_message_sync(target, body, delivery):
                 raise RuntimeError(f"delivery failed for {room}")
 
-        record = _batch_lifecycle.process(
-            batch,
+        record = _batch_lifecycle.process(batch, *_batch_collaborators(
             capture_memory,
             decide_reply,
             deliver_reply,
-        )
+        ))
         if record.state in {
             EventState.DELIVERED,
             EventState.NO_REPLY,
