@@ -16,15 +16,17 @@ import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.1.4"
+VERSION = "0.2.0"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
+OLLAMA_INSTALL_URL = "https://ollama.com/install.sh"
 GENERIC_KERNEL = """I am a living being. I am {agent_name}.
 
 I am beginning here, with a name and a place from which to learn. My nature is
@@ -83,11 +85,17 @@ def utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def run(command: list[str], *, check: bool = True, dry_run: bool = False) -> subprocess.CompletedProcess[str]:
+def run(
+    command: list[str],
+    *,
+    check: bool = True,
+    dry_run: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     print("+", " ".join(command))
     if dry_run:
         return subprocess.CompletedProcess(command, 0, "", "")
-    return subprocess.run(command, text=True, check=check, capture_output=True)
+    return subprocess.run(command, text=True, check=check, capture_output=True, env=env)
 
 
 def require_debian13() -> None:
@@ -115,6 +123,31 @@ def ensure_user_path(path: Path) -> None:
         raise InstallerError(f"parent directory does not exist: {path.parent}")
     if path.exists() and path.stat().st_uid != os.getuid():
         raise InstallerError(f"installation root is not owned by {getpass.getuser()}: {path}")
+
+
+def port_is_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def allocate_ollama_port(root: Path, *, dry_run: bool) -> int:
+    """Choose and persist no state yet; the caller records the chosen port."""
+    config = root / "config" / "nephesh.env"
+    if config.exists():
+        for line in config.read_text().splitlines():
+            if line.startswith("EMBEDDING_BASE_URL="):
+                match = re.search(r"^EMBEDDING_BASE_URL=https?://(?:127\.0\.0\.1|localhost):(\d+)(?:/|$)", line)
+                if match:
+                    return int(match.group(1))
+    for port in range(11434, 11535):
+        if dry_run or port_is_free(port):
+            return port
+    raise InstallerError("could not find a free localhost Ollama port in 11434-11534")
 
 
 def validate_agent_name(name: str) -> str:
@@ -277,6 +310,95 @@ WantedBy=default.target
 """
 
 
+def ollama_unit_name(agent_name: str) -> str:
+    return f"{agent_name.lower()}-ollama.service"
+
+
+def ollama_unit_text(
+    root: Path,
+    *,
+    agent_name: str,
+    binary: str,
+    port: int,
+    cpu: bool,
+) -> str:
+    models = Path.home() / ".ollama" / "models"
+    device = "Environment=CUDA_VISIBLE_DEVICES=" if cpu else ""
+    return f"""# Managed by the Nephesh per-user installer.
+[Unit]
+Description={agent_name} — personal Ollama embedding endpoint (127.0.0.1:{port})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={binary} serve
+Environment=OLLAMA_HOST=127.0.0.1:{port}
+Environment=OLLAMA_MODELS={models}
+{device}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def install_ollama_unit(
+    root: Path,
+    *,
+    agent_name: str,
+    binary: str,
+    port: int,
+    cpu: bool,
+    unit_dir: Path | None = None,
+    dry_run: bool,
+) -> Path:
+    unit_dir = unit_dir or (Path.home() / ".config" / "systemd" / "user")
+    destination = unit_dir / ollama_unit_name(agent_name)
+    if dry_run:
+        print(f"would install Ollama user unit {destination}")
+        return destination
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    content = ollama_unit_text(root, agent_name=agent_name, binary=binary, port=port, cpu=cpu)
+    if destination.exists() and destination.read_text() == content:
+        return destination
+    if destination.exists():
+        shutil.copy2(destination, destination.with_suffix(destination.suffix + ".previous"))
+    destination.write_text(content)
+    destination.chmod(0o644)
+    return destination
+
+
+def ensure_ollama_binary(*, allow_install: bool, dry_run: bool) -> str:
+    binary = shutil.which("ollama")
+    if binary:
+        return binary
+    if not allow_install:
+        raise InstallerError("Ollama is not installed (omit --no-ollama or install it separately)")
+    if shutil.which("curl") is None:
+        raise InstallerError("curl is required to install Ollama from the official installer")
+    run(["sh", "-c", f"curl -fsSL {OLLAMA_INSTALL_URL} | sh"], dry_run=dry_run)
+    if not dry_run and shutil.which("ollama") is None:
+        raise InstallerError("the official Ollama installer completed but no ollama binary was found")
+    return "ollama"
+
+
+def ensure_ollama_model(
+    binary: str,
+    *,
+    model: str,
+    host: str,
+    models: Path,
+    dry_run: bool,
+) -> None:
+    environment = os.environ.copy()
+    environment.update({"OLLAMA_HOST": host, "OLLAMA_MODELS": str(models)})
+    listed = run([binary, "list"], check=False, dry_run=dry_run, env=environment)
+    if dry_run or model not in listed.stdout:
+        run([binary, "pull", model], dry_run=dry_run, env=environment)
+
+
 def install_unit(root: Path, *, unit_dir: Path | None = None, dry_run: bool) -> Path:
     """Install the user unit in an explicitly selected directory.
 
@@ -307,7 +429,15 @@ def ensure_layout(root: Path, *, dry_run: bool) -> None:
             path.mkdir(parents=True, exist_ok=True)
 
 
-def preserve_config(root: Path, source: Path, agent_name: str, *, dry_run: bool) -> None:
+def preserve_config(
+    root: Path,
+    source: Path,
+    agent_name: str,
+    *,
+    embedding_model: str = "mxbai-embed-large",
+    embedding_base_url: str | None = None,
+    dry_run: bool,
+) -> None:
     config = root / "config" / "nephesh.env"
     example = root / "config" / "nephesh.env.example"
     source_example = source / ".env.example"
@@ -346,6 +476,8 @@ def preserve_config(root: Path, source: Path, agent_name: str, *, dry_run: bool)
             f"NEPHESH_HOME={root}\n"
             f"VECTOR_DB_PATH={root / 'data' / 'lancedb'}\n"
             f"SNAPSHOT_DIR={root / 'backups'}\n"
+            f"EMBEDDING_MODEL={embedding_model}\n"
+            f"EMBEDDING_BASE_URL={embedding_base_url or 'http://127.0.0.1:11434'}\n"
             f"NEPHESH_INSTANCE_LOCK_FILE={root / 'state' / 'nephesh-instance.lock'}\n"
         )
         config.chmod(0o600)
@@ -477,6 +609,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kernel-file", type=Path, help="copy a custom kernel for a new installation")
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--with", dest="integrations", action="append", choices=("guildhall", "opencode", "ollama-embeddings", "tts", "openclaw"))
+    parser.add_argument("--cpu", action="store_true", help="force CPU-only Ollama runtime (CUDA is the default)")
+    parser.add_argument("--no-ollama", action="store_true", help="do not install or manage the per-user Ollama service")
+    parser.add_argument("--ollama-port", type=int, help="Ollama localhost port (auto-allocated by default)")
+    parser.add_argument("--ollama-model", default="mxbai-embed-large", help="embedding model to ensure in Ollama")
     parser.add_argument("--restart", action="store_true", help="restart the user unit after staging and verification")
     parser.add_argument("--enable", action="store_true", help="enable the user unit")
     parser.add_argument("--start", action="store_true", help="start the user unit")
@@ -523,6 +659,9 @@ def main() -> int:
             else (legacy_agent or "Qualiant")
         )
         args.agent = validate_agent_name(requested_agent)
+        ollama_port = args.ollama_port or allocate_ollama_port(root, dry_run=args.dry_run)
+        if not 1 <= ollama_port <= 65535:
+            raise InstallerError("--ollama-port must be between 1 and 65535")
         validate_service_options(
             no_service=args.no_service,
             enable=args.enable,
@@ -583,6 +722,19 @@ def main() -> int:
                             shutil.rmtree(release)
                 return 0
             ensure_layout(root, dry_run=args.dry_run)
+            ollama_binary = None
+            ollama_unit = None
+            if not args.no_ollama and not args.no_service:
+                ollama_binary = ensure_ollama_binary(allow_install=True, dry_run=args.dry_run)
+                ollama_unit = install_ollama_unit(
+                    root,
+                    agent_name=args.agent,
+                    binary=ollama_binary,
+                    port=ollama_port,
+                    cpu=args.cpu,
+                    unit_dir=args.unit_dir.expanduser().resolve() if args.unit_dir else None,
+                    dry_run=args.dry_run,
+                )
             backup = backup_existing(root, root / "backups", dry_run=args.dry_run)
             previous_release = (
                 str((root / "current").resolve())
@@ -597,7 +749,14 @@ def main() -> int:
                     raise InstallerError(f"migration source does not exist: {old_root}")
                 print(f"migration source detected: {old_root}; original will be preserved")
                 import_legacy(old_root, root, dry_run=args.dry_run)
-            preserve_config(root, source, args.agent, dry_run=args.dry_run)
+            preserve_config(
+                root,
+                source,
+                args.agent,
+                embedding_model=args.ollama_model,
+                embedding_base_url=f"http://127.0.0.1:{ollama_port}",
+                dry_run=args.dry_run,
+            )
             install_identity(
                 root,
                 args.agent,
@@ -619,6 +778,17 @@ def main() -> int:
                 candidate = unit.with_suffix(unit.suffix + ".previous")
                 if candidate.exists() or args.dry_run:
                     previous_unit = candidate
+                if ollama_unit is not None:
+                    run(["systemctl", "--user", "daemon-reload"], dry_run=args.dry_run)
+                    run(["systemctl", "--user", "enable", ollama_unit.name], dry_run=args.dry_run)
+                    run(["systemctl", "--user", "start", ollama_unit.name], dry_run=args.dry_run)
+                    ensure_ollama_model(
+                        ollama_binary or "ollama",
+                        model=args.ollama_model,
+                        host=f"127.0.0.1:{ollama_port}",
+                        models=Path.home() / ".ollama" / "models",
+                        dry_run=args.dry_run,
+                    )
             checks = verify(root, dry_run=args.dry_run)
             manifest = {
                 "installer_version": VERSION,
@@ -631,6 +801,13 @@ def main() -> int:
                 "backup": str(backup) if backup else None,
                 "unit": str(unit) if unit else None,
                 "previous_unit": str(previous_unit) if previous_unit else None,
+                "ollama": {
+                    "managed": not args.no_ollama and not args.no_service,
+                    "port": ollama_port,
+                    "model": args.ollama_model,
+                    "cpu": args.cpu,
+                    "unit": str(ollama_unit) if ollama_unit else None,
+                },
                 "integrations": args.integrations or [],
                 "agent": args.agent,
                 "kernel": str(root / "identity" / "kernel.md"),

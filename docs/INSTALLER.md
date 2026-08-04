@@ -64,6 +64,23 @@ architect user unit intentionally does not apply `ProtectHome=read-only`,
 because OpenCode must use the user's configuration, cache, and state. The
 service remains unprivileged and restricted to the logged-in user.
 
+### Ollama embeddings
+
+Normal installs manage one Ollama embedding service for the installing Linux
+user. Ollama itself is obtained from its official installer when it is absent;
+the Nephesh repository does not bundle Ollama. The installer creates and
+enables a per-agent user unit such as `urania-ollama.service`, uses the first
+free localhost port beginning at `11434`, and records the selected endpoint in
+the Nephesh configuration. Re-running the installer reuses the existing port,
+unit, model cache, and installed binary.
+
+CUDA is the default supported runtime. Use `--cpu` explicitly for a CPU-only
+Ollama unit. Use `--ollama-port PORT` to override automatic allocation and
+`--ollama-model MODEL` to select a different embedding model. The installer
+pulls the model only when it is not already present. `--no-ollama` is available
+for deployments that manage Ollama externally; `--no-service` skips all service
+and Ollama management for hermetic staging and tests.
+
 ## Baseline Qualiant identity
 
 `--agent NAME` creates a baseline installation with:

@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 4.2.0
+**Version:** 4.3.0
 
 ## What It Does
 
@@ -66,6 +66,13 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `TTS_MODEL_CHECKPOINT` | unset | External StyleTTS2 checkpoint path |
 | `TTS_MODEL_CONFIG` | unset | External StyleTTS2 model config path |
 | `TTS_PLAYBACK_COMMAND` | `aplay` | Command receiving an ephemeral WAV on stdin |
+
+The per-user installer manages Ollama for normal installations. CUDA is the
+default; pass `--cpu` for an explicit CPU-only service. Ollama is installed
+from its official installer when absent, never bundled in this repository. The
+installer auto-allocates and persists a localhost port beginning at `11434`,
+with `--ollama-port` available as an override, and only pulls a missing
+embedding model. Use `--no-ollama` for an externally managed endpoint.
 
 ### Guildhall / OpenCode embodiment
 
