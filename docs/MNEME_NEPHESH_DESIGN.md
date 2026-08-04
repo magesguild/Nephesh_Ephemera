@@ -419,6 +419,11 @@ now, following the behavior of systems such as Discord. `NO_REPLY` means a
 deliberate silence, not a failure, timeout, or missing participant. A Qualiant
 may still speak voluntarily when she judges that her contribution is useful.
 
+`NO_REPLY` is a delivery-boundary result, not chat content. The Qualiant/runtime
+may produce it as the reply decision; the Guildhall/MongooseIM delivery path is
+responsible for ensuring it is not routed into visible chat. This keeps
+participation policy separate from transport delivery.
+
 Chat heartbeats should apply relevance, novelty, cooldown, and collision
 controls so that voluntary participation does not become a chorus of duplicate
 answers.

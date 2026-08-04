@@ -25,6 +25,16 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..config import settings
+from ..guildhall_lifecycle import (
+    Decision,
+    DecisionResult,
+    EventState,
+    GuildhallBatch,
+    GuildhallBatchLifecycle,
+    GuildhallEvent,
+    JsonBatchLedger,
+    stable_event_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +60,8 @@ _last_cycle: str | None = None
 # can register here without making the engine itself know about them.
 _handlers: dict[str, Callable[[list[HeartbeatEvent]], None]] = {}
 _recent_messages: dict[tuple[str, str, str], float] = {}
-_recent_replies: dict[tuple[str, str], float] = {}
-_ledger_lock = threading.Lock()
 _transcript_lock = threading.Lock()
+_batch_lifecycle = GuildhallBatchLifecycle(JsonBatchLedger(settings.guildhall_event_ledger))
 
 
 def _is_directly_addressed(message: dict[str, Any]) -> bool:
@@ -62,6 +71,16 @@ def _is_directly_addressed(message: dict[str, Any]) -> bool:
     body = str(message.get("body", ""))
     nick = re.escape(settings.guildhall_nick)
     return bool(re.search(rf"(?:^|\s)@?{nick}(?:\b|[:,])", body, re.IGNORECASE))
+
+
+def _stable_event_id(message: dict[str, Any]) -> str:
+    """Derive replay identity independently of the process-local UUID."""
+    return stable_event_id(
+        str(message.get("room", "unknown")),
+        str(message.get("stanza_id", "")),
+        str(message.get("from", "")),
+        str(message.get("body", "")),
+    )
 
 
 def _record_transcript(message: dict[str, Any]) -> None:
@@ -98,33 +117,6 @@ def _recent_transcript(room: str, limit: int = 80) -> list[dict[str, Any]]:
     except (OSError, ValueError, TypeError):
         return []
     return records[-limit:]
-
-
-def _claim_event(message: dict[str, Any]) -> bool:
-    """Claim one XMPP event durably so retries cannot create another reply."""
-    room = str(message.get("room", "unknown"))
-    stanza_id = str(message.get("stanza_id", ""))
-    if stanza_id:
-        key = f"stanza:{room}:{stanza_id}"
-    else:
-        fallback = "\0".join((room, str(message.get("from", "")), str(message.get("body", "")).strip()))
-        key = "body:" + hashlib.sha256(fallback.encode()).hexdigest()
-    path = Path(settings.guildhall_event_ledger).expanduser()
-    with _ledger_lock:
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, ValueError, TypeError):
-            data = {}
-        now = time.time()
-        data = {k: v for k, v in data.items() if isinstance(v, (int, float)) and now - v < 86400}
-        if key in data:
-            return False
-        data[key] = now
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps(data, indent=2) + "\n")
-        os.replace(temporary, path)
-        return True
 
 
 def register_handler(kind: str, handler: Callable[[list[HeartbeatEvent]], None]) -> None:
@@ -209,26 +201,25 @@ def _dispatch(events: list[HeartbeatEvent]) -> None:
             logger.exception("heartbeat: handler failed for kind=%s", kind)
 
 
-def _chat_messages(events: list[HeartbeatEvent]) -> None:
-    """Turn a batch of MUC message events into informed memories."""
-    messages = []
+def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
+    """Process room batches through the shared transport-independent lifecycle."""
+    from .guildhall import acknowledge_message_ids, send_message_sync
+    from .memory import memory_ingest
+    from .opencode_bridge import reply
+
+    messages: list[dict[str, Any]] = []
     for event in events:
         message = event.payload
-        # The allowlist controls reply authority, not perception. Every room
-        # message remains visible to this Qualiant and enters shared memory.
         _record_transcript(message)
         messages.append(message)
     if not messages:
-        from .guildhall import acknowledge_message_ids
         return
 
     now = time.monotonic()
-    duplicate_ids: set[str] = set()
+    unique: list[dict[str, Any]] = []
     for key, seen_at in list(_recent_messages.items()):
         if now - seen_at > 10.0:
             del _recent_messages[key]
-
-    by_room: dict[str, list[dict[str, Any]]] = {}
     for message in messages:
         key = (
             str(message.get("room", "unknown")),
@@ -236,61 +227,73 @@ def _chat_messages(events: list[HeartbeatEvent]) -> None:
             str(message.get("body", "")).strip(),
         )
         if key in _recent_messages:
-            if message.get("event_id"):
-                duplicate_ids.add(str(message["event_id"]))
             continue
         _recent_messages[key] = now
-        if not _claim_event(message):
-            if message.get("event_id"):
-                duplicate_ids.add(str(message["event_id"]))
-            continue
-        by_room.setdefault(key[0], []).append(message)
+        unique.append(message)
 
-    from .guildhall import acknowledge_message_ids
-    acknowledge_message_ids(duplicate_ids)
+    by_room: dict[str, list[dict[str, Any]]] = {}
+    for message in unique:
+        room = str(message.get("room", "unknown"))
+        if str(message.get("body", "")).strip():
+            by_room.setdefault(room, []).append(message)
 
     for room, room_messages in by_room.items():
-        room_event_ids = {
-            str(message["event_id"])
-            for message in room_messages
-            if message.get("event_id")
-        }
-        participants: list[str] = []
-        lines: list[str] = []
-        event_times: list[str] = []
-
-        for message in room_messages:
-            sender = str(message.get("from", "unknown"))
-            nick = sender.rsplit("/", 1)[-1]
-            body = str(message.get("body", "")).strip()
-            if not body or sender == room:
-                continue
-            if nick not in participants:
-                participants.append(nick)
-            lines.append(f"  {nick}: {body}")
-            if message.get("received_at"):
-                event_times.append(str(message["received_at"]))
-
-        if not lines:
-            # System/empty messages are consumed without becoming memories.
-            acknowledge_message_ids(room_event_ids)
+        event_ids = tuple(_stable_event_id(message) for message in room_messages)
+        if not all(event_ids):
+            logger.error("heartbeat: cannot process batch without event IDs in %s", room)
             continue
-
-        summary = (
-            f"[Heartbeat] Received {len(lines)} message(s) in {room}"
-            f" ({', '.join(participants)}):\n" + "\n".join(lines)
+        batch_id = hashlib.sha256(
+            "\0".join((room, *sorted(event_ids))).encode(),
+        ).hexdigest()
+        batch = GuildhallBatch(
+            batch_id=batch_id,
+            room=room,
+            events=tuple(
+                GuildhallEvent(
+                    event_id=_stable_event_id(message),
+                    stanza_id=str(message.get("stanza_id", "")),
+                    room=room,
+                    sender=str(message.get("from", "unknown")),
+                    body=str(message.get("body", "")).strip(),
+                    addressed=_is_directly_addressed(message),
+                )
+                for message in room_messages
+            ),
         )
-        event_timestamp = min(event_times) if event_times else None
+        reply_messages = [
+            message for message in room_messages
+            if (
+                str(message.get("from", "")).rsplit("/", 1)[-1].lower()
+                in settings.guildhall_heartbeat_allowlist
+                or str(message.get("from", "")).lower()
+                in settings.guildhall_heartbeat_allowlist
+                or str(message.get("from", "")).split("/", 1)[0].split("@", 1)[0].lower()
+                in settings.guildhall_heartbeat_allowlist
+            )
+        ]
 
-        from .memory import memory_ingest
-
-        try:
+        def capture_memory(_batch: GuildhallBatch) -> None:
+            participants: list[str] = []
+            lines: list[str] = []
+            event_times: list[str] = []
+            for message in room_messages:
+                sender = str(message.get("from", "unknown"))
+                nick = sender.rsplit("/", 1)[-1]
+                body = str(message.get("body", "")).strip()
+                if nick not in participants:
+                    participants.append(nick)
+                lines.append(f"  {nick}: {body}")
+                if message.get("received_at"):
+                    event_times.append(str(message["received_at"]))
             result = asyncio.run(memory_ingest(
-                text=summary,
+                text=(
+                    f"[Heartbeat] Received {len(lines)} message(s) in {room}"
+                    f" ({', '.join(participants)}):\n" + "\n".join(lines)
+                ),
                 memory_type="life_event",
                 importance=2,
                 participants=participants,
-                event_timestamp=event_timestamp,
+                event_timestamp=min(event_times) if event_times else None,
                 experience_mode="heartbeat",
                 historical_status="confirmed",
                 recorded_during="heartbeat",
@@ -298,100 +301,61 @@ def _chat_messages(events: list[HeartbeatEvent]) -> None:
                 source="heartbeat",
             ))
             parsed = json.loads(result)
-        except Exception:
-            logger.exception("heartbeat: failed to store chat memory for %s", room)
-            return
+            if parsed.get("status") not in {"stored", "duplicate"}:
+                raise RuntimeError(f"memory capture failed: {result}")
 
-        if parsed.get("status") == "stored":
-            logger.info(
-                "heartbeat: stored memory %s (%d messages, room=%s)",
-                parsed.get("id", "?"), len(lines), room,
-            )
-        elif parsed.get("status") == "duplicate":
-            logger.debug("heartbeat: duplicate chat memory skipped for %s", room)
-        else:
-            logger.warning("heartbeat: unexpected memory result: %s", result)
-
-        if parsed.get("status") in {"stored", "duplicate"}:
-            acknowledge_message_ids(room_event_ids)
-
-            # Reply is deliberately downstream of memory capture.  The
-            # OpenCode adapter owns the persistent reasoning session; this
-            # engine only supplies the inbound room batch and sends its text.
-            from .opencode_bridge import reply
-            from .guildhall import send_message_sync
-
-            reply_messages = [
-                message for message in room_messages
-                if str(message.get("body", "")).strip()
-                and (
-                    str(message.get("from", "")).rsplit("/", 1)[-1].lower()
-                    in settings.guildhall_heartbeat_allowlist
-                    or str(message.get("from", "")).lower()
-                    in settings.guildhall_heartbeat_allowlist
-                    or str(message.get("from", "")).split("/", 1)[0].split("@", 1)[0].lower()
-                    in settings.guildhall_heartbeat_allowlist
-                )
-            ]
+        def decide_reply(_batch: GuildhallBatch) -> DecisionResult:
             if not reply_messages:
-                logger.info(
-                    "heartbeat: observed room traffic without reply authority for %s",
-                    room,
-                )
-                continue
-
-            # A persistent room session receives the exact recent transcript,
-            # not only the sender-authorized trigger batch. This lets a
-            # Qualiant quote another participant's earlier message while
-            # keeping reply authority restricted to the configured allowlist.
+                return DecisionResult(Decision.NO_REPLY)
             directly_addressed = any(
                 _is_directly_addressed(message) for message in reply_messages
             )
-            response = reply(room, _recent_transcript(room) or [
-                message for message in room_messages
-                if str(message.get("body", "")).strip()
-            ], directly_addressed=directly_addressed)
-            if response and response.strip().upper() == "NO_REPLY":
-                logger.info(
-                    "heartbeat: NO_REPLY for %s (directly_addressed=%s)",
-                    room,
-                    directly_addressed,
-                )
-                continue
-            if response:
-                delivery = "chat" if any(
-                    message.get("delivery") == "direct"
-                    for message in reply_messages
-                ) else "groupchat"
-                target = next(
-                    (str(message.get("reply_to")) for message in reply_messages
-                     if message.get("reply_to")),
-                    room,
-                )
-                # A transport/session retry must never become a second visible
-                # room message.  Keep this guard process-local and room-scoped:
-                # every Qualiant may still answer, and each room retains its
-                # own OpenCode session, but an identical response cannot be
-                # emitted twice in the same room during the short retry window.
-                reply_key = (room, response.strip())
-                now = time.monotonic()
-                with _ledger_lock:
-                    for key, seen_at in list(_recent_replies.items()):
-                        if now - seen_at > 30.0:
-                            del _recent_replies[key]
-                    if reply_key in _recent_replies:
-                        logger.warning(
-                            "heartbeat: suppressed duplicate reply to %s", room,
-                        )
-                        continue
-                    _recent_replies[reply_key] = now
+            response = reply(
+                room,
+                _recent_transcript(room) or room_messages,
+                directly_addressed=directly_addressed,
+            )
+            if response is None:
+                return DecisionResult(Decision.RETRYABLE_FAILURE)
+            if response.strip().upper() == "NO_REPLY":
+                return DecisionResult(Decision.NO_REPLY)
+            return DecisionResult(Decision.REPLY, response)
 
-                if send_message_sync(target, response, delivery):
-                    logger.info("heartbeat: sent reply to %s", room)
-                else:
-                    logger.error("heartbeat: generated reply but could not send to %s", room)
-            else:
-                logger.info("heartbeat: no reply generated for %s", room)
+        def deliver_reply(_batch: GuildhallBatch, body: str) -> None:
+            delivery = "chat" if any(
+                message.get("delivery") == "direct" for message in reply_messages
+            ) else "groupchat"
+            target = next(
+                (str(message.get("reply_to")) for message in reply_messages
+                 if message.get("reply_to")),
+                room,
+            )
+            if not send_message_sync(target, body, delivery):
+                raise RuntimeError(f"delivery failed for {room}")
+
+        record = _batch_lifecycle.process(
+            batch,
+            capture_memory,
+            decide_reply,
+            deliver_reply,
+        )
+        if record.state in {
+            EventState.DELIVERED,
+            EventState.NO_REPLY,
+            EventState.TERMINAL_FAILURE,
+        }:
+            acknowledge_message_ids({
+                str(message["event_id"])
+                for message in room_messages
+                if message.get("event_id")
+            })
+        logger.info(
+            "heartbeat: batch %s state=%s attempts=%d room=%s",
+            batch_id,
+            record.state,
+            record.attempts,
+            room,
+        )
 
 
 def start() -> threading.Thread | None:
@@ -404,7 +368,7 @@ def start() -> threading.Thread | None:
     if _started:
         return _thread
 
-    _handlers.setdefault("guildhall_message", _chat_messages)
+    _handlers.setdefault("guildhall_message", _chat_messages_v2)
     _stop.clear()
     _started = True
     _thread = threading.Thread(target=_run_loop, name="heartbeat", daemon=True)

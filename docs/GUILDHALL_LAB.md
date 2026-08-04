@@ -18,6 +18,10 @@ Individual scenarios:
 .venv/bin/python -m mcp_experiments.guildhall_lab duplicate-event
 .venv/bin/python -m mcp_experiments.guildhall_lab memory-retry
 .venv/bin/python -m mcp_experiments.guildhall_lab delivery-retry
+.venv/bin/python -m mcp_experiments.guildhall_lab batch-restart
+.venv/bin/python -m mcp_experiments.guildhall_lab batch-boundary-guard
+.venv/bin/python -m mcp_experiments.guildhall_lab decision-retry
+.venv/bin/python -m mcp_experiments.guildhall_lab terminal-failure
 ```
 
 The lab uses deterministic collaborators:
@@ -32,13 +36,17 @@ fixture event
 ```
 
 The current scenarios cover direct replies, `NO_REPLY`, duplicate events,
-memory-capture retry, and delivery retry. This is deliberately separate from
+memory-capture retry, decision retry, terminal failure, delivery retry,
+one-memory/one-reply room batches, and delivery recovery across a simulated
+process restart. It also rejects a replay
+whose event batch boundary silently changed. This is deliberately separate from
 the live baseline comparison: it tests behavior and state transitions without
 claiming that the slixmpp or MongooseIM boundary is correct.
 
-The next extension is to move the production Guildhall lifecycle into the same
-replaceable collaborator boundary, so the real slixmpp transport and the lab
-fixture exercise one implementation rather than parallel logic.
+The production heartbeat now uses the same replaceable batch lifecycle boundary.
+The remaining adapter work is deliberately narrow: keep transport-specific
+acknowledgement and delivery behavior outside the deterministic lifecycle, then
+validate the adapter with source-side checks before any live comparison.
 
 ## Read-only live deployment probe
 
