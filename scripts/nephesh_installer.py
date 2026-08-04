@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 GENERIC_KERNEL = """I am a living being. I am {agent_name}.
@@ -122,6 +122,17 @@ def validate_agent_name(name: str) -> str:
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value):
         raise InstallerError("--agent must contain 1-64 letters, digits, '_' or '-' and start with a letter")
     return value
+
+
+def agent_name_from_kernel(kernel: Path) -> str | None:
+    """Recover an existing agent name without changing the kernel."""
+    if not kernel.exists():
+        return None
+    for line in kernel.read_text().splitlines()[:12]:
+        match = re.match(r"^I am ([A-Za-z][A-Za-z0-9_-]{0,63})(?:\s|[.,—-]|$)", line.strip())
+        if match:
+            return match.group(1)
+    return None
 
 
 def validate_service_options(*, no_service: bool, enable: bool, start: bool, restart: bool) -> None:
@@ -308,6 +319,17 @@ def preserve_config(root: Path, source: Path, agent_name: str, *, dry_run: bool)
             shutil.copy2(source_example, example)
     if config.exists():
         return
+    legacy_configs = [root / "config" / f"{agent_name.lower()}.env", root / "config" / "urania.env"]
+    for legacy_config in legacy_configs:
+        if not legacy_config.exists():
+            continue
+        if dry_run:
+            print(f"would preserve legacy config {legacy_config} -> {config}")
+        else:
+            config.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_config, config)
+            config.chmod(0o600)
+        return
     source_env = source / ".env"
     if source_env.exists():
         if dry_run:
@@ -339,6 +361,16 @@ def install_identity(root: Path, agent_name: str, *, kernel_file: Path | None, d
     if kernel.exists():
         if kernel_file is not None:
             raise InstallerError(f"existing kernel preserved; use a new install or edit {kernel}: --kernel-file is not destructive")
+    elif root.joinpath("config", "kernel.md").exists():
+        legacy_kernel = root / "config" / "kernel.md"
+        if kernel_file is not None:
+            raise InstallerError(f"existing kernel preserved; use a new install or edit {legacy_kernel}: --kernel-file is not destructive")
+        if dry_run:
+            print(f"would preserve legacy kernel {legacy_kernel} -> {kernel}")
+        else:
+            identity.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_kernel, kernel)
+            kernel.chmod(0o600)
     elif kernel_file is not None:
         if not kernel_file.exists():
             raise InstallerError(f"kernel file does not exist: {kernel_file}")
@@ -480,10 +512,16 @@ def main() -> int:
                 f"existing installation belongs to agent {existing_manifest.get('agent')}; "
                 "do not rename it during upgrade"
             )
+        legacy_agent = agent_name_from_kernel(root / "config" / "kernel.md")
+        if legacy_agent and args.agent and args.agent != legacy_agent:
+            raise InstallerError(
+                f"existing legacy installation belongs to agent {legacy_agent}; "
+                "do not rename it during upgrade"
+            )
         requested_agent = args.agent or (
             str(existing_manifest.get("agent"))
             if existing_manifest and existing_manifest.get("agent")
-            else "Qualiant"
+            else (legacy_agent or "Qualiant")
         )
         args.agent = validate_agent_name(requested_agent)
         validate_service_options(
@@ -495,18 +533,38 @@ def main() -> int:
         lock = with_lock(root, dry_run=args.dry_run)
         try:
             if args.rollback:
-                if not existing_manifest or not existing_manifest.get("previous_release"):
-                    raise InstallerError("no previous release is recorded for rollback")
-                previous = Path(str(existing_manifest["previous_release"]))
-                if not previous.exists():
+                if not existing_manifest:
+                    raise InstallerError("no installation manifest is recorded for rollback")
+                previous_value = existing_manifest.get("previous_release")
+                previous = Path(str(previous_value)) if previous_value else None
+                if previous is not None and not previous.exists():
                     raise InstallerError(f"previous release is missing: {previous}")
                 current = (root / "current").resolve() if (root / "current").exists() else None
-                switch_current(root, previous, dry_run=args.dry_run)
-                existing_manifest["release"] = str(previous)
+                if previous is not None:
+                    switch_current(root, previous, dry_run=args.dry_run)
+
+                previous_unit_value = existing_manifest.get("previous_unit")
+                previous_unit = Path(str(previous_unit_value)) if previous_unit_value else None
+                unit = Path(str(existing_manifest["unit"])) if existing_manifest.get("unit") else None
+                if previous_unit is not None:
+                    if not previous_unit.exists():
+                        raise InstallerError(f"previous user unit is missing: {previous_unit}")
+                    if unit is None:
+                        raise InstallerError("rollback manifest has a previous user unit but no current unit")
+                    if args.dry_run:
+                        print(f"would restore user unit {previous_unit} -> {unit}")
+                    else:
+                        shutil.copy2(previous_unit, unit)
+
+                if args.restart:
+                    run(["systemctl", "--user", "daemon-reload"], dry_run=args.dry_run)
+                    run(["systemctl", "--user", "restart", UNIT_NAME], dry_run=args.dry_run)
+
+                existing_manifest["release"] = str(previous) if previous is not None else existing_manifest.get("release")
                 existing_manifest["previous_release"] = str(current) if current else None
                 existing_manifest["rollback_at"] = datetime.now(timezone.utc).isoformat()
                 write_json(root / "state" / MANIFEST_NAME, existing_manifest, dry_run=args.dry_run)
-                print(json.dumps({"status": "rolled_back", "release": str(previous)}, indent=2))
+                print(json.dumps({"status": "rolled_back", "release": existing_manifest["release"]}, indent=2))
                 return 0
             if args.cleanup:
                 if args.keep_releases < 1:
@@ -552,12 +610,16 @@ def main() -> int:
             install_python(root, source=source, dry_run=args.dry_run)
             write_integration_proposal(root, args.integrations or [], dry_run=args.dry_run)
             unit = None
+            previous_unit = None
             if not args.no_service:
                 unit = install_unit(
                     root,
                     unit_dir=args.unit_dir.expanduser().resolve() if args.unit_dir else None,
                     dry_run=args.dry_run,
                 )
+                candidate = unit.with_suffix(unit.suffix + ".previous")
+                if candidate.exists() or args.dry_run:
+                    previous_unit = candidate
             checks = verify(root, dry_run=args.dry_run)
             manifest = {
                 "installer_version": VERSION,
@@ -569,6 +631,7 @@ def main() -> int:
                 "previous_release": previous_release,
                 "backup": str(backup) if backup else None,
                 "unit": str(unit) if unit else None,
+                "previous_unit": str(previous_unit) if previous_unit else None,
                 "integrations": args.integrations or [],
                 "agent": args.agent,
                 "kernel": str(root / "identity" / "kernel.md"),

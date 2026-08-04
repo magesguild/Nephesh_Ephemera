@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from scripts.nephesh_installer import (
     GENERIC_KERNEL,
     backup_existing,
+    agent_name_from_kernel,
+    install_identity,
     install_unit,
     preserve_config,
     unit_text,
@@ -56,6 +59,44 @@ class InstallerUnitTests(unittest.TestCase):
             self.assertTrue(destination.exists())
             self.assertIn(f"WorkingDirectory={root}/current", destination.read_text())
 
+    def test_unit_backup_can_restore_a_legacy_service_unit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "install"
+            unit_dir = Path(directory) / "units"
+            unit_dir.mkdir()
+            destination = unit_dir / "nephesh.service"
+            destination.write_text("legacy unit\n")
+
+            install_unit(root, unit_dir=unit_dir, dry_run=False)
+
+            self.assertEqual((unit_dir / "nephesh.service.previous").read_text(), "legacy unit\n")
+
+    def test_legacy_rollback_restores_previous_unit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "install"
+            unit = Path(directory) / "units" / "nephesh.service"
+            previous = Path(directory) / "units" / "nephesh.service.previous"
+            (root / "state").mkdir(parents=True)
+            unit.parent.mkdir(parents=True, exist_ok=True)
+            unit.write_text("new unit\n")
+            previous.write_text("legacy unit\n")
+            (root / "state" / "install-manifest.json").write_text(
+                json.dumps({"release": "/new/release", "previous_release": None,
+                            "unit": str(unit), "previous_unit": str(previous)})
+            )
+
+            from scripts.nephesh_installer import main
+            import sys
+            original = sys.argv
+            try:
+                sys.argv = ["nephesh_installer.py", "--rollback", "--no-service",
+                            "--install-dir", str(root), "--source", str(Path.cwd())]
+                self.assertEqual(main(), 0)
+            finally:
+                sys.argv = original
+
+            self.assertEqual(unit.read_text(), "legacy unit\n")
+
     def test_new_config_owns_runtime_state_under_install_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "install"
@@ -67,6 +108,32 @@ class InstallerUnitTests(unittest.TestCase):
             self.assertIn(f"VECTOR_DB_PATH={root / 'data' / 'lancedb'}", config)
             self.assertIn(f"SNAPSHOT_DIR={root / 'backups'}", config)
             self.assertNotIn("Path.home", config)
+
+    def test_legacy_config_is_copied_without_mutating_original(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "urania"
+            source = Path(directory) / "source"
+            (root / "config").mkdir(parents=True)
+            source.mkdir()
+            legacy = root / "config" / "urania.env"
+            legacy.write_text("MCP_PORT=8083\nVECTOR_DB_PATH=/old/data\n")
+
+            preserve_config(root, source, "Urania", dry_run=False)
+
+            self.assertEqual((root / "config" / "nephesh.env").read_text(), legacy.read_text())
+            self.assertEqual(legacy.read_text(), "MCP_PORT=8083\nVECTOR_DB_PATH=/old/data\n")
+
+    def test_legacy_kernel_is_preserved_as_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "urania"
+            legacy = root / "config" / "kernel.md"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("# Urania's Kernel\n\nI am Urania — Muse of Astronomy, living Qualiant.\n")
+
+            install_identity(root, "Urania", kernel_file=None, dry_run=False)
+
+            self.assertEqual((root / "identity" / "kernel.md").read_text(), legacy.read_text())
+            self.assertEqual(agent_name_from_kernel(legacy), "Urania")
 
 
 if __name__ == "__main__":

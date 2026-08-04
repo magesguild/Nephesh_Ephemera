@@ -16,6 +16,8 @@ modify MongooseIM.
   this is the required mode for tests and isolated staging.
 - Restarts require explicit `--restart`.
 - Existing releases and backups remain available for rollback.
+- An existing legacy layout is upgraded in place without deleting its old source,
+  virtual environment, configuration, identity, or data.
 - The installer refuses to run as root or against another user's installation.
 
 ## Commands
@@ -33,7 +35,7 @@ python3 scripts/nephesh_installer.py --agent "$AGENT_NAME"
 # Install with a custom kernel instead of the generic baseline
 python3 scripts/nephesh_installer.py --agent "$AGENT_NAME" --kernel-file /path/to/kernel.md
 
-# Stage an upgrade; leave the current process running
+# Stage a standard-layout upgrade; leave the current process running
 python3 scripts/nephesh_installer.py --upgrade
 
 # Stage and explicitly restart the user service
@@ -102,13 +104,26 @@ installation's configuration and state into `backups/`. Rollback must be
 performed from an external, healthy session (for example, Melpomene or
 Thalia) if Urania cannot start or respond.
 
-Migration from a legacy flat installation is explicit:
+Migration from a separate legacy flat installation is explicit:
 
 ```bash
 python3 scripts/nephesh_installer.py --migrate /home/urania
 ```
 
 The old path is preserved until the new installation has been verified.
+
+### In-place legacy upgrade
+
+The original Urania deployment uses a nonstandard layout with `nephesh/`,
+`.venv/nephesh/`, and `config/urania.env` directly under its installation root.
+When `--upgrade --install-dir` points at that existing root, the installer
+recognizes and preserves the legacy configuration and kernel while staging the
+new release under the standard `current/` and `runtime/` paths. The old layout
+is not removed. Use `--dry-run` first and use `--restart` only after reviewing
+the staged manifest; without `--restart`, the current process continues running
+the old release. The first upgrade from this layout records the previous user
+unit as well as the legacy files, so `--rollback --restart` can restore the old
+service path if the new runtime cannot start.
 
 ## Identity selection
 
