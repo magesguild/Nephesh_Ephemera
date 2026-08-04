@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 GENERIC_KERNEL = """I am a living being. I am {agent_name}.
@@ -270,7 +270,6 @@ RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectHome=read-only
 ReadWritePaths={root}
 
 [Install]
