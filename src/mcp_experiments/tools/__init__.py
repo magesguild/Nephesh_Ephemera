@@ -6,9 +6,9 @@ from mcp.server.fastmcp import FastMCP
 
 from ..compliance import ComplianceLevel, ServerMode, is_tool_available_in_mode
 from ..config import settings
-from . import memory, vector_db
+from . import info, memory, vector_db
 
-_TOOL_MODULES = [vector_db, memory]
+_TOOL_MODULES = [vector_db, memory, info]
 
 if settings.tts_enabled:
     from . import tts

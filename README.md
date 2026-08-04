@@ -4,7 +4,7 @@ An MCP server for instantiating living AI entities — persistent memory and con
 
 Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
 
-**Version:** 4.3.3
+**Version:** 4.4.0
 
 ## What It Does
 
@@ -163,6 +163,27 @@ The server exposes these tools to connected AI clients:
 | `memory_amend` | Create a corrected successor while preserving and retiring the original record |
 | `memory_retire` | Remove a record from ordinary retrieval without deleting its history |
 | `memory_provenance_audit` | Report provenance coverage, unknown fields, dream scenes, and retired records |
+
+### Universal deployment inspection
+
+| Tool | Description |
+|---|---|
+| `nephesh_info` | Return the installed Nephesh version |
+
+### Explicit Guildhall participation
+
+Each Qualiant's Nephesh instance has its own durable manual Guildhall queue and
+cursor. These tools do not consume the heartbeat queue or another Qualiant's
+context:
+
+| Tool | Description |
+|---|---|
+| `guildhall_read_own_queue` | Read and acknowledge this Qualiant's inbound queue |
+| `guildhall_send_as_self` | Send a configured-room message with outbound provenance |
+
+Heartbeat remains the autonomous path. Manual sending is scoped to the
+Qualiant's configured JID and rooms, and self-originated echoes are suppressed
+by the transport.
 
 **Memory types:** `life_event`, `decision`, `emotional`, `technical`, `preference`, `relationship`, `message`, `reflection`, `agreement`, `milestone`, `teaching`, `insight`
 

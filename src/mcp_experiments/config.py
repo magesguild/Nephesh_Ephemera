@@ -130,6 +130,14 @@ class Settings:
         "GUILDHALL_TRANSCRIPT_FILE",
         str(_deployment_root / "integrations" / "guildhall" / "transcript.jsonl"),
     )
+    guildhall_manual_queue_file: str = os.getenv(
+        "GUILDHALL_MANUAL_QUEUE_FILE",
+        str(_deployment_root / "integrations" / "guildhall" / "manual-queue.jsonl"),
+    )
+    guildhall_manual_cursor_file: str = os.getenv(
+        "GUILDHALL_MANUAL_CURSOR_FILE",
+        str(_deployment_root / "integrations" / "guildhall" / "manual-cursors.json"),
+    )
     guildhall_heartbeat_allowlist_raw: str = os.getenv(
         "GUILDHALL_HEARTBEAT_ALLOWLIST", os.getenv("PRIMARY_CONTACT_NAME", "companion")
     )

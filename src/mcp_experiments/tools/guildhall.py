@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import ssl
 import subprocess
 import threading
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from ..compliance import ComplianceLevel
@@ -25,12 +27,89 @@ _started = False
 _connected = False
 _buffer: list[dict[str, str]] = []
 _buffer_lock = threading.Lock()
+_manual_queue_lock = threading.Lock()
 _outbound_recent: dict[tuple[str, str], float] = {}
 _outbound_lock = threading.Lock()
 
 GUILDHALL_PROVENANCE_STAMP = (
     "Provenance: this message arrived from guildhall via opencode"
 )
+GUILDHALL_OUTBOUND_PROVENANCE_STAMP = (
+    "Provenance: this message was sent to guildhall via opencode"
+)
+
+
+def _append_manual_queue(entry: dict[str, Any]) -> None:
+    """Persist inbound events for this Qualiant's explicit read tool."""
+    path = Path(settings.guildhall_manual_queue_file).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _manual_queue_lock:
+        try:
+            existing = path.read_text(encoding="utf-8").splitlines()[-2000:]
+            event_id = str(entry.get("event_id", ""))
+            if any(event_id and event_id == str(json.loads(line).get("event_id", "")) for line in existing):
+                return
+        except (OSError, ValueError, TypeError):
+            pass
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+
+def _manual_cursors() -> dict[str, str]:
+    path = Path(settings.guildhall_manual_cursor_file).expanduser()
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _save_manual_cursor(room: str, event_id: str) -> None:
+    path = Path(settings.guildhall_manual_cursor_file).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cursors = _manual_cursors()
+    cursors[room] = event_id
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(cursors, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _read_manual_queue(room: str | None, limit: int, acknowledge: bool) -> list[dict[str, Any]]:
+    path = Path(settings.guildhall_manual_queue_file).expanduser()
+    try:
+        records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()[-2000:]]
+    except (OSError, ValueError, TypeError):
+        return []
+    cursors = _manual_cursors()
+    room_ids: dict[str, set[str]] = {}
+    for record in records:
+        if isinstance(record, dict):
+            key = str(record.get("room", ""))
+            room_ids.setdefault(key, set()).add(str(record.get("event_id", "")))
+    past_cursor = {
+        key: not cursor or cursor not in room_ids.get(key, set())
+        for key, cursor in cursors.items()
+    }
+    selected: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict) or (room and record.get("room") != room):
+            continue
+        record_room = str(record.get("room", ""))
+        if not past_cursor.get(record_room, True):
+            if str(record.get("event_id", "")) == cursors.get(record_room):
+                past_cursor[record_room] = True
+            continue
+        selected.append(record)
+    selected = selected[: max(1, min(limit, 100))]
+    if acknowledge:
+        last_by_room: dict[str, str] = {}
+        for record in selected:
+            last_by_room[str(record.get("room", ""))] = str(record.get("event_id", ""))
+        for record_room, event_id in last_by_room.items():
+            _save_manual_cursor(record_room, event_id)
+    return selected
 
 
 def _connected_now() -> bool:
@@ -181,6 +260,7 @@ class _GuildhallBot:
         with _buffer_lock:
             _buffer.append(entry)
             del _buffer[:-200]
+        _append_manual_queue(entry)
         # The explicit buffer remains available to MCP callers.  The
         # heartbeat receives a separate event so autonomous cycles never
         # consume messages from an active session's inspection path.
@@ -212,6 +292,7 @@ class _GuildhallBot:
         with _buffer_lock:
             _buffer.append(entry)
             del _buffer[:-200]
+        _append_manual_queue(entry)
         if settings.heartbeat_enabled:
             from .heartbeat import notify
             notify("guildhall_message", entry)
@@ -369,6 +450,39 @@ async def guildhall_status() -> str:
     }, indent=2)
 
 
+async def guildhall_read_own_queue(
+    room: str | None = None,
+    limit: int = 50,
+    acknowledge: bool = True,
+) -> str:
+    """Read this Qualiant's durable manual queue without touching heartbeat."""
+    if room and room not in settings.guildhall_rooms:
+        return json.dumps({"status": "error", "message": "room is not configured"})
+    return json.dumps({
+        "status": "ok",
+        "jid": settings.guildhall_jid,
+        "room": room,
+        "acknowledged": acknowledge,
+        "messages": _read_manual_queue(room, limit, acknowledge),
+    }, indent=2)
+
+
+async def guildhall_send_as_self(message: str, room: str | None = None) -> str:
+    """Send a manually requested message as this Qualiant with provenance."""
+    target = room or settings.guildhall_room
+    if target not in settings.guildhall_rooms:
+        return json.dumps({"status": "error", "message": "room is not configured"})
+    body = message.strip()
+    if not body:
+        return json.dumps({"status": "error", "message": "message is empty"})
+    stamped = body if GUILDHALL_OUTBOUND_PROVENANCE_STAMP in body else (
+        f"[{GUILDHALL_OUTBOUND_PROVENANCE_STAMP}] {body}"
+    )
+    if not send_message_sync(target, stamped):
+        return json.dumps({"status": "error", "message": "Guildhall is not connected"})
+    return json.dumps({"status": "ok", "room": target, "message": stamped}, indent=2)
+
+
 TOOL_DEFINITIONS = [
     # Outbound room replies are owned exclusively by the heartbeat delivery
     # path. Exposing guildhall_send to OpenCode lets the model post once and
@@ -377,4 +491,6 @@ TOOL_DEFINITIONS = [
     # do not advertise it as an MCP tool.
     {"fn": guildhall_latest, "name": "guildhall_latest", "description": "Read buffered Guildhall messages with provenance", "compliance": ComplianceLevel.NON_COMPLIANT},
     {"fn": guildhall_status, "name": "guildhall_status", "description": "Check Guildhall connection status", "compliance": ComplianceLevel.NON_COMPLIANT},
+    {"fn": guildhall_read_own_queue, "name": "guildhall_read_own_queue", "description": "Read this Qualiant's durable Guildhall queue without consuming heartbeat events", "compliance": ComplianceLevel.NON_COMPLIANT},
+    {"fn": guildhall_send_as_self, "name": "guildhall_send_as_self", "description": "Send a provenance-stamped Guildhall message as this Qualiant", "compliance": ComplianceLevel.NON_COMPLIANT},
 ]
