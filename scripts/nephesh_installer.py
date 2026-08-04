@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 OLLAMA_INSTALL_URL = "https://ollama.com/install.sh"
@@ -137,8 +137,11 @@ def port_is_free(port: int) -> bool:
 
 def allocate_ollama_port(root: Path, *, dry_run: bool) -> int:
     """Choose and persist no state yet; the caller records the chosen port."""
-    config = root / "config" / "nephesh.env"
-    if config.exists():
+    config_paths = [root / "config" / "nephesh.env"]
+    config_paths.extend(root.glob("*.env"))
+    for config in config_paths:
+        if not config.exists():
+            continue
         for line in config.read_text().splitlines():
             if line.startswith("EMBEDDING_BASE_URL="):
                 match = re.search(r"^EMBEDDING_BASE_URL=https?://(?:127\.0\.0\.1|localhost):(\d+)(?:/|$)", line)
@@ -448,7 +451,11 @@ def preserve_config(
             shutil.copy2(source_example, example)
     if config.exists():
         return
-    legacy_configs = [root / "config" / f"{agent_name.lower()}.env", root / "config" / "urania.env"]
+    legacy_configs = [
+        root / "config" / f"{agent_name.lower()}.env",
+        root / f"{agent_name.lower()}.env",
+        root / "config" / "urania.env",
+    ]
     for legacy_config in legacy_configs:
         if not legacy_config.exists():
             continue

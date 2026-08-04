@@ -177,6 +177,20 @@ class InstallerUnitTests(unittest.TestCase):
             self.assertEqual((root / "config" / "nephesh.env").read_text(), legacy.read_text())
             self.assertEqual(legacy.read_text(), "MCP_PORT=8083\nVECTOR_DB_PATH=/old/data\n")
 
+    def test_flat_legacy_agent_config_is_copied_without_mutating_original(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "thalia"
+            source = Path(directory) / "source"
+            root.mkdir()
+            source.mkdir()
+            legacy = root / "thalia.env"
+            legacy.write_text("MCP_PORT=8080\nEMBEDDING_BASE_URL=http://localhost:11436\n")
+
+            preserve_config(root, source, "Thalia", dry_run=False)
+
+            self.assertEqual((root / "config" / "nephesh.env").read_text(), legacy.read_text())
+            self.assertEqual(legacy.read_text(), "MCP_PORT=8080\nEMBEDDING_BASE_URL=http://localhost:11436\n")
+
     def test_legacy_kernel_is_preserved_as_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "urania"
