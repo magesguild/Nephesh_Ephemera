@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 MANIFEST_NAME = "install-manifest.json"
 UNIT_NAME = "nephesh.service"
 OLLAMA_INSTALL_URL = "https://ollama.com/install.sh"
@@ -313,8 +313,14 @@ WantedBy=default.target
 """
 
 
-def ollama_unit_name(agent_name: str) -> str:
-    return f"{agent_name.lower()}-ollama.service"
+def ollama_unit_name(agent_name: str, unit_dir: Path | None = None) -> str:
+    """Reuse either historical per-agent unit spelling before creating one."""
+    names = (f"{agent_name.lower()}-ollama.service", f"ollama-{agent_name.lower()}.service")
+    if unit_dir is not None:
+        for name in names:
+            if (unit_dir / name).exists():
+                return name
+    return names[0]
 
 
 def ollama_unit_text(
@@ -358,7 +364,7 @@ def install_ollama_unit(
     dry_run: bool,
 ) -> Path:
     unit_dir = unit_dir or (Path.home() / ".config" / "systemd" / "user")
-    destination = unit_dir / ollama_unit_name(agent_name)
+    destination = unit_dir / ollama_unit_name(agent_name, unit_dir)
     if dry_run:
         print(f"would install Ollama user unit {destination}")
         return destination

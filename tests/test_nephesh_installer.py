@@ -59,6 +59,12 @@ class InstallerUnitTests(unittest.TestCase):
         self.assertIn("CUDA_VISIBLE_DEVICES=", cpu)
         self.assertIn("WantedBy=default.target", cpu)
 
+    def test_ollama_unit_reuses_historical_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            unit_dir = Path(directory)
+            (unit_dir / "ollama-thalia.service").write_text("historical unit\n")
+            self.assertEqual(ollama_unit_name("Thalia", unit_dir), "ollama-thalia.service")
+
     def test_ollama_model_pull_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
