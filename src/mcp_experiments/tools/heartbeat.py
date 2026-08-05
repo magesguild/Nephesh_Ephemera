@@ -134,6 +134,27 @@ def _record_transcript(message: dict[str, Any]) -> None:
             os.fsync(handle.fileno())
 
 
+def _retry_guildhall_messages(messages: list[dict[str, Any]], delay: float = 5.0) -> None:
+    """Wake the heartbeat again after a transient batch failure.
+
+    Failed events intentionally remain in Guildhall's live buffer, but a
+    queue wake is edge-triggered.  Without an explicit retry wake, a failure
+    after memory capture or model invocation leaves the event in ``claimed``
+    state forever until another room message happens to arrive.
+    """
+    retry_messages = [dict(message) for message in messages]
+    for message in retry_messages:
+        _recent_messages.pop(_message_dedupe_key(message), None)
+
+    def wake() -> None:
+        for message in retry_messages:
+            notify("guildhall_message", message)
+
+    timer = threading.Timer(delay, wake)
+    timer.daemon = True
+    timer.start()
+
+
 def _recent_transcript(room: str, limit: int = 80) -> list[dict[str, Any]]:
     path = Path(settings.guildhall_transcript_file).expanduser()
     records: list[dict[str, Any]] = []
@@ -233,6 +254,7 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
     """Process room batches through the shared transport-independent lifecycle."""
     from .guildhall import (
         GUILDHALL_PROVENANCE_STAMP,
+        GUILDHALL_SELF_PROVENANCE_STAMP,
         acknowledge_message_ids,
         send_message_sync,
     )
@@ -315,7 +337,12 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
                 body = str(message.get("body", "")).strip()
                 if nick not in participants:
                     participants.append(nick)
-                lines.append(f"  {nick}: {body}")
+                author_note = (
+                    f" [{GUILDHALL_SELF_PROVENANCE_STAMP}]"
+                    if message.get("self_authored")
+                    else ""
+                )
+                lines.append(f"  {nick}{author_note}: {body}")
                 if message.get("received_at"):
                     event_times.append(str(message["received_at"]))
             result = asyncio.run(memory_ingest(
@@ -341,8 +368,6 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
                 raise RuntimeError(f"memory capture failed: {result}")
 
         def decide_reply(_batch: GuildhallBatch) -> DecisionResult:
-            if not reply_messages:
-                return DecisionResult(Decision.NO_REPLY)
             directly_addressed = any(
                 _is_directly_addressed(message) for message in reply_messages
             )
@@ -392,6 +417,8 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
                 for message in room_messages
                 if message.get("event_id")
             })
+        elif record.state is EventState.RETRYABLE_FAILURE:
+            _retry_guildhall_messages(room_messages)
         logger.info(
             "heartbeat: batch %s state=%s attempts=%d room=%s",
             batch_id,

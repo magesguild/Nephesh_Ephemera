@@ -37,6 +37,9 @@ _outbound_waiters: dict[tuple[str, str], list[threading.Event]] = {}
 GUILDHALL_PROVENANCE_STAMP = (
     "Provenance: this message arrived from guildhall via opencode"
 )
+GUILDHALL_SELF_PROVENANCE_STAMP = (
+    "Provenance: this message was previously posted by me"
+)
 GUILDHALL_OUTBOUND_PROVENANCE_STAMP = (
     "Provenance: this message was sent to guildhall via opencode"
 )
@@ -271,20 +274,32 @@ class _GuildhallBot:
     def _groupchat_message(self, msg: Any) -> None:
         if msg["type"] != "groupchat":
             return
+        # MUC presence/subject stanzas can be surfaced through the generic
+        # groupchat handler with no usable body.  They are transport noise,
+        # not messages: do not put them in the live buffer, durable queue, or
+        # heartbeat stream.  Besides making ``latest`` misleading, retaining
+        # them could wake the heartbeat without anything it can acknowledge.
+        body = str(msg.get("body", ""))
+        if not body.strip():
+            return
         sender = msg["from"]
         # A message is self-originated only when both room and nick match.
-        if getattr(sender, "resource", "") == settings.guildhall_nick:
-            _confirm_outbound(str(getattr(sender, "bare", "")), str(msg["body"]))
-            return
+        self_authored = getattr(sender, "resource", "") == settings.guildhall_nick
+        if self_authored:
+            _confirm_outbound(str(getattr(sender, "bare", "")), body)
+        provenance = GUILDHALL_PROVENANCE_STAMP
+        if self_authored:
+            provenance = f"{provenance}; {GUILDHALL_SELF_PROVENANCE_STAMP}"
         entry = {
             "event_id": str(uuid.uuid4()),
             "stanza_id": str(msg.get("id", "")),
             "source": "guildhall",
             "transport": "xmpp-muc",
-            "provenance": GUILDHALL_PROVENANCE_STAMP,
+            "provenance": provenance,
+            "self_authored": self_authored,
             "room": str(getattr(sender, "bare", "")),
             "from": str(sender),
-            "body": str(msg["body"]),
+            "body": body,
             "received_at": datetime.now(timezone.utc).isoformat(),
         }
         with _buffer_lock:

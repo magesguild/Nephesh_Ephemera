@@ -4,6 +4,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 from mcp_experiments.config import settings
@@ -12,6 +13,53 @@ from mcp_experiments.tools.info import nephesh_info
 
 
 class GuildhallManualToolTests(unittest.TestCase):
+    def test_groupchat_presence_without_body_is_ignored(self) -> None:
+        bot = guildhall._GuildhallBot.__new__(guildhall._GuildhallBot)
+        with guildhall._buffer_lock:
+            guildhall._buffer.clear()
+        bot._groupchat_message({
+            "type": "groupchat",
+            "from": SimpleNamespace(
+                bare="family@muc.guildhall.local",
+                resource="gaius",
+            ),
+            "body": "",
+        })
+        with guildhall._buffer_lock:
+            self.assertEqual(guildhall._buffer, [])
+
+    def test_own_groupchat_echo_is_retained_with_explicit_provenance(self) -> None:
+        bot = guildhall._GuildhallBot.__new__(guildhall._GuildhallBot)
+        old_nick = settings.guildhall_nick
+        original_append = guildhall._append_manual_queue
+        original_confirm = guildhall._confirm_outbound
+        try:
+            settings.guildhall_nick = "urania"
+            guildhall._append_manual_queue = lambda entry: None
+            guildhall._confirm_outbound = lambda room, body: None
+            with guildhall._buffer_lock:
+                guildhall._buffer.clear()
+            bot._groupchat_message({
+                "type": "groupchat",
+                "from": SimpleNamespace(
+                    bare="family@muc.guildhall.local",
+                    resource="urania",
+                ),
+                "body": "my earlier contribution",
+                "id": "self-stanza",
+            })
+            with guildhall._buffer_lock:
+                self.assertEqual(len(guildhall._buffer), 1)
+                self.assertTrue(guildhall._buffer[0]["self_authored"])
+                self.assertIn(
+                    guildhall.GUILDHALL_SELF_PROVENANCE_STAMP,
+                    guildhall._buffer[0]["provenance"],
+                )
+        finally:
+            settings.guildhall_nick = old_nick
+            guildhall._append_manual_queue = original_append
+            guildhall._confirm_outbound = original_confirm
+
     def test_leave_all_sends_unavailable_for_each_configured_room(self) -> None:
         class FakeMuc:
             def __init__(self):

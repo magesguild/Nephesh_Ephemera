@@ -22,7 +22,10 @@ from typing import Any
 import httpx
 
 from ..config import settings
-from .guildhall import GUILDHALL_PROVENANCE_STAMP
+from .guildhall import (
+    GUILDHALL_PROVENANCE_STAMP,
+    GUILDHALL_SELF_PROVENANCE_STAMP,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +238,8 @@ def _format_guildhall_messages(messages: list[dict[str, Any]]) -> str:
         body = str(message.get("body", ""))
         if GUILDHALL_PROVENANCE_STAMP not in body:
             body = f"[{GUILDHALL_PROVENANCE_STAMP}] {body}"
+        if message.get("self_authored"):
+            body = f"[{GUILDHALL_SELF_PROVENANCE_STAMP}] {body}"
         lines.append(f"{message.get('from', 'unknown')}: {body}")
     return "\n".join(lines)
 

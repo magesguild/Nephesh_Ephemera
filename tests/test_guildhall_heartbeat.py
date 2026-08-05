@@ -9,6 +9,7 @@ from mcp_experiments.tools.heartbeat import _message_dedupe_key
 from mcp_experiments.tools.heartbeat import _batch_collaborators
 from mcp_experiments.tools.opencode_bridge import (
     GUILDHALL_PROVENANCE_STAMP,
+    GUILDHALL_SELF_PROVENANCE_STAMP,
     _format_guildhall_messages,
 )
 
@@ -44,6 +45,15 @@ class GuildhallHeartbeatTests(unittest.TestCase):
             {"from": "gaius", "body": f"[{GUILDHALL_PROVENANCE_STAMP}] first"},
         ])
         self.assertEqual(already_stamped.count(GUILDHALL_PROVENANCE_STAMP), 1)
+
+        own_message = _format_guildhall_messages([
+            {
+                "from": "family@muc.guildhall.local/urania",
+                "body": "my earlier message",
+                "self_authored": True,
+            },
+        ])
+        self.assertIn(GUILDHALL_SELF_PROVENANCE_STAMP, own_message)
 
     def test_batch_collaborators_expose_batch_protocol_methods(self) -> None:
         capture, decide, deliver = _batch_collaborators(lambda batch: None, lambda batch: None, lambda batch, body: None)

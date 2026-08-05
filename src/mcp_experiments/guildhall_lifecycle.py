@@ -272,7 +272,11 @@ class GuildhallLifecycle:
             self.delivery.send(event, result.body)
             record.transition(EventState.DELIVERED)
             return record
-        except RuntimeError as exc:
+        # Adapters may raise transport/library-specific exceptions rather
+        # than RuntimeError.  A failure after claiming must still become a
+        # durable retryable state; otherwise the event remains invisible in
+        # the process-local buffer with no way for the worker to wake again.
+        except Exception as exc:
             record.transition(EventState.RETRYABLE_FAILURE, str(exc))
             return record
 
@@ -376,6 +380,9 @@ class GuildhallBatchLifecycle:
             delivery.send_batch(batch, result.body)
             self._transition(record, EventState.DELIVERED)
             return record
-        except RuntimeError as exc:
+        # Treat unexpected adapter failures as retryable as well.  In
+        # particular, memory and model clients commonly raise ValueError or
+        # library-specific exceptions during transient outages.
+        except Exception as exc:
             self._transition(record, EventState.RETRYABLE_FAILURE, str(exc))
             return record
