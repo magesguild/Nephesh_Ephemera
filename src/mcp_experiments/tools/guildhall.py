@@ -377,7 +377,11 @@ class _GuildhallBot:
 
     async def send(self, room: str, body: str, delivery: str = "groupchat") -> None:
         stanza = self.client.send_message(mto=room, mbody=body, mtype=delivery)
-        logger.info("guildhall: outbound stanza queued room=%s id=%s", room, stanza.get("id", ""))
+        # Slixmpp returns None for a successfully queued stanza in this
+        # client mode. The transport queue, not a returned stanza object, is
+        # the completion boundary here.
+        stanza_id = stanza.get("id", "") if stanza is not None else ""
+        logger.info("guildhall: outbound stanza queued room=%s id=%s", room, stanza_id)
 
 
 def acknowledge_message_ids(event_ids: set[str]) -> None:

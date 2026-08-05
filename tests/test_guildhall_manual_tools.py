@@ -13,6 +13,15 @@ from mcp_experiments.tools.info import nephesh_info
 
 
 class GuildhallManualToolTests(unittest.TestCase):
+    def test_send_accepts_slixmpp_none_return_for_queued_stanza(self) -> None:
+        class FakeClient:
+            def send_message(self, **kwargs):
+                return None
+
+        bot = guildhall._GuildhallBot.__new__(guildhall._GuildhallBot)
+        bot.client = FakeClient()
+        asyncio.run(bot.send("family@muc.guildhall.local", "hello"))
+
     def test_groupchat_presence_without_body_is_ignored(self) -> None:
         bot = guildhall._GuildhallBot.__new__(guildhall._GuildhallBot)
         with guildhall._buffer_lock:
