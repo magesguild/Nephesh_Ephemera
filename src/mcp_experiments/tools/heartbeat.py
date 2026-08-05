@@ -368,6 +368,13 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
                 raise RuntimeError(f"memory capture failed: {result}")
 
         def decide_reply(_batch: GuildhallBatch) -> DecisionResult:
+            # The heartbeat owns outbound room replies.  Non-allowlisted
+            # traffic is still captured in the transcript/memory above and
+            # will be visible in the next addressed batch, but it must not
+            # wake a model reply of its own or every room participant starts
+            # answering every other participant.
+            if not reply_messages:
+                return DecisionResult(Decision.NO_REPLY)
             directly_addressed = any(
                 _is_directly_addressed(message) for message in reply_messages
             )

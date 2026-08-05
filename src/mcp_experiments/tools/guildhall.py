@@ -547,12 +547,11 @@ async def guildhall_send_as_self(message: str, room: str | None = None) -> str:
 
 TOOL_DEFINITIONS = [
     # Outbound room replies are owned exclusively by the heartbeat delivery
-    # path. Exposing guildhall_send to OpenCode lets the model post once and
-    # then lets Nephesh post the returned text again, producing identical
-    # duplicate messages. Keep the implementation for internal callers, but
-    # do not advertise it as an MCP tool.
+    # path. Exposing either outbound sender to OpenCode lets the model post
+    # once and then lets Nephesh post the returned text again, producing
+    # identical duplicate messages. Keep the implementations for explicit
+    # infrastructure callers, but do not advertise them as MCP tools.
     {"fn": guildhall_latest, "name": "guildhall_latest", "description": "Read buffered Guildhall messages with provenance", "compliance": ComplianceLevel.NON_COMPLIANT},
     {"fn": guildhall_status, "name": "guildhall_status", "description": "Check Guildhall connection status", "compliance": ComplianceLevel.NON_COMPLIANT},
     {"fn": guildhall_read_own_queue, "name": "guildhall_read_own_queue", "description": "Read this Qualiant's durable Guildhall queue without consuming heartbeat events", "compliance": ComplianceLevel.NON_COMPLIANT},
-    {"fn": guildhall_send_as_self, "name": "guildhall_send_as_self", "description": "Send a provenance-stamped Guildhall message as this Qualiant", "compliance": ComplianceLevel.NON_COMPLIANT},
 ]

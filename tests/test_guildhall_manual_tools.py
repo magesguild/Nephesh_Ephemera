@@ -147,6 +147,12 @@ class GuildhallManualToolTests(unittest.TestCase):
         self.assertIn("version", payload)
         self.assertTrue(payload["version"])
 
+    def test_outbound_sender_is_not_model_visible(self) -> None:
+        self.assertNotIn(
+            "guildhall_send_as_self",
+            {definition["name"] for definition in guildhall.TOOL_DEFINITIONS},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
