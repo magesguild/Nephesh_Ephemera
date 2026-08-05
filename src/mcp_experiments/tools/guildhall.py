@@ -472,8 +472,21 @@ def send_message_sync(room: str, message: str, delivery: str = "groupchat") -> b
         )
         future.result(timeout=10)
         if not confirmation.wait(timeout=10):
-            logger.error("guildhall: outbound stanza was not echoed by room=%s", room)
-            return False
+            # The stanza was accepted by slixmpp and placed on the transport,
+            # but MUC servers do not uniformly echo a sender's own message
+            # back to that sender.  Treating the missing echo as a send
+            # failure causes the lifecycle retry path to repost an already
+            # visible message every few seconds.  The delivery state is
+            # uncertain, but retrying here is strictly unsafe; leave the
+            # process-local idempotency mark in place and complete this send.
+            logger.warning(
+                "guildhall: outbound stanza queued without self-echo; "
+                "not retrying room=%s",
+                room,
+            )
+            with _outbound_lock:
+                _outbound_recent[key] = time.monotonic()
+            return True
         with _outbound_lock:
             _outbound_recent[key] = time.monotonic()
         return True
