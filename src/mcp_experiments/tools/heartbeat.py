@@ -34,6 +34,7 @@ from ..guildhall_lifecycle import (
     GuildhallBatchLifecycle,
     GuildhallEvent,
     JsonBatchLedger,
+    TerminalDeliveryFailure,
     stable_event_id,
 )
 
@@ -407,7 +408,11 @@ def _chat_messages_v2(events: list[HeartbeatEvent]) -> None:
                 room,
             )
             if not send_message_sync(target, body, delivery):
-                raise RuntimeError(f"delivery failed for {room}")
+                # A send attempt may have reached the transport even when
+                # the local client cannot prove completion.  Never replay a
+                # room reply automatically: groupchat receipts/self-echoes
+                # are not reliable delivery semantics (XEP-0184).
+                raise TerminalDeliveryFailure(f"delivery uncertain for {room}")
 
         record = _batch_lifecycle.process(batch, *_batch_collaborators(
             capture_memory,

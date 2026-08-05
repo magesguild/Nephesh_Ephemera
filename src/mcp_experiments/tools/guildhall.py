@@ -181,7 +181,13 @@ class _GuildhallBot:
 
         self.client.register_plugin("xep_0045")
         self.client.register_plugin("xep_0199")
+        # XEP-0198 provides server-level stanza acknowledgement/resumption;
+        # XEP-0410 provides the standards-defined MUC self-ping used to
+        # detect a local joined-state that the room no longer recognizes.
+        self.client.register_plugin("xep_0198")
+        self.client.register_plugin("xep_0410")
         self.client.add_event_handler("session_start", self._session_start)
+        self.client.add_event_handler("muc_ping_changed", self._muc_ping_changed)
         self.client.add_event_handler("groupchat_message", self._groupchat_message)
         self.client.add_event_handler("message", self._direct_message)
         self.client.add_event_handler("disconnected", self._disconnected)
@@ -236,6 +242,9 @@ class _GuildhallBot:
                 )
                 with _joined_lock:
                     _joined_rooms.add(room)
+                self.client.plugin["xep_0410"].enable_self_ping(
+                    f"{room}/{nick}", interval=900, timeout=30,
+                )
                 logger.info("guildhall: joined %s as %s", room, nick)
             except Exception as exc:
                 logger.warning("guildhall: could not join %s: %s", room, exc)
@@ -259,6 +268,9 @@ class _GuildhallBot:
                 )
                 with _joined_lock:
                     _joined_rooms.add(room)
+                self.client.plugin["xep_0410"].enable_self_ping(
+                    f"{room}/{nick}", interval=900, timeout=30,
+                )
                 logger.info("guildhall: joined %s as %s after retry", room, nick)
                 return
             except Exception as exc:
@@ -275,6 +287,12 @@ class _GuildhallBot:
                 logger.info("guildhall: left %s as %s", room, settings.guildhall_nick)
             except Exception:
                 logger.debug("guildhall: leave failed for %s", room, exc_info=True)
+
+    def _muc_ping_changed(self, event: dict[str, Any]) -> None:
+        """Record protocol-level evidence that our MUC membership changed."""
+        result = str(event.get("result", ""))
+        if result in {"PingStatus.DISCONNECTED", "PingStatus.TIMEOUT"}:
+            logger.warning("guildhall: MUC self-ping lost for %s: %s", event.get("key"), result)
 
     def _groupchat_message(self, msg: Any) -> None:
         if msg["type"] != "groupchat":

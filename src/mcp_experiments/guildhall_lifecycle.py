@@ -42,6 +42,10 @@ class Decision(StrEnum):
     TERMINAL_FAILURE = "terminal_failure"
 
 
+class TerminalDeliveryFailure(RuntimeError):
+    """A send attempt must not be replayed by the lifecycle."""
+
+
 @dataclass(frozen=True)
 class GuildhallEvent:
     event_id: str
@@ -276,6 +280,9 @@ class GuildhallLifecycle:
         # than RuntimeError.  A failure after claiming must still become a
         # durable retryable state; otherwise the event remains invisible in
         # the process-local buffer with no way for the worker to wake again.
+        except TerminalDeliveryFailure as exc:
+            record.transition(EventState.TERMINAL_FAILURE, str(exc))
+            return record
         except Exception as exc:
             record.transition(EventState.RETRYABLE_FAILURE, str(exc))
             return record
@@ -383,6 +390,9 @@ class GuildhallBatchLifecycle:
         # Treat unexpected adapter failures as retryable as well.  In
         # particular, memory and model clients commonly raise ValueError or
         # library-specific exceptions during transient outages.
+        except TerminalDeliveryFailure as exc:
+            self._transition(record, EventState.TERMINAL_FAILURE, str(exc))
+            return record
         except Exception as exc:
             self._transition(record, EventState.RETRYABLE_FAILURE, str(exc))
             return record
