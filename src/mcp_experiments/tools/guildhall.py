@@ -239,7 +239,12 @@ class _GuildhallBot:
                 logger.info("guildhall: joined %s as %s", room, nick)
             except Exception as exc:
                 logger.warning("guildhall: could not join %s: %s", room, exc)
-                _cleanup_stale_occupants(room)
+                # The control CLI is synchronous and may wait several
+                # seconds.  Never run it on Slixmpp's transport loop: doing
+                # so makes unrelated outbound sends time out and appear to
+                # be delivery failures, which then triggers duplicate
+                # heartbeat retries.
+                await asyncio.to_thread(_cleanup_stale_occupants, room)
                 asyncio.create_task(self._retry_room(room, nick))
 
     async def _retry_room(self, room: str, nick: str) -> None:
@@ -258,7 +263,7 @@ class _GuildhallBot:
                 return
             except Exception as exc:
                 logger.info("guildhall: room %s still unavailable; retrying: %s", room, exc)
-                _cleanup_stale_occupants(room)
+                await asyncio.to_thread(_cleanup_stale_occupants, room)
 
     async def leave_all(self) -> None:
         """Send explicit unavailable presence for every joined room."""
