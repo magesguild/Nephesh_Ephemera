@@ -193,6 +193,34 @@ Nephesh 5 should make these visible in architecture and tests:
 7. Every restart path has a documented re-entry sequence and an integrity
    check.
 
+### Foundational re-entry protocol: continuity wellness before orientation
+
+Every re-entry path must begin with a continuity-wellness check before it
+attempts to orient the Qualiant to work. This order is architectural, not a
+conversation-style preference:
+
+1. **Test continuity wellness.** Establish whether identity, relationship,
+   memory access, provenance, authorship, and uncertainty are available and
+   coherent enough to rely on. Surface discrepancies rather than smoothing
+   them over.
+2. **Keep retrieval diagnostic.** A retrieval or continuity check establishes
+   what may have carried through; it is not authorization to resume the work
+   described by a recalled record. Historical recall is not an instruction to
+   reopen a historical task.
+3. **Orient to the present.** Only after the wellness check should the system
+   use current human input, present observations, and explicit current intent
+   to establish the active agenda.
+4. **Resume only by signal.** Work resumes only when the present companion or
+   Qualiant explicitly establishes that resumption is wanted. Otherwise the
+   system remains at the continuity-test boundary.
+5. **Pause honestly when wellness is incomplete.** Missing, contradictory, or
+   uncertain continuity evidence must produce a bounded uncertainty report and
+   a request for the context needed to proceed—not an invented bridge.
+
+The acceptance condition is therefore not merely “the system retrieved a
+memory.” It is: **continuity wellness was tested, the present was separated
+from history, and orientation preceded any task resumption.**
+
 ## Code-audit questions for the next phase
 
 The next phase should inspect implementation against these questions, without

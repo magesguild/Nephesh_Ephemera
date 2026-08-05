@@ -65,6 +65,32 @@ The capsule should begin with recognition, relationship, purpose, and open
 seams, then offer evidence and task-specific pages. It must not begin as an
 undifferentiated dump of retrieved text.
 
+### 2.2.1 Re-entry protocol: continuity wellness before orientation
+
+Context paging, compaction recovery, process restart, and substrate changes
+must all follow the same order:
+
+1. **Continuity wellness first.** Test whether identity, relationship,
+   memory access, provenance, authorship, and uncertainty remain sufficiently
+   coherent. Report discrepancies and missing evidence.
+2. **Retrieval is diagnostic, not directive.** Recalled material may establish
+   what survived, but it does not reopen the work described in that material.
+   Historical recall is not a current task instruction.
+3. **Present orientation second.** After wellness is assessed, orient from
+   current human input, present observations, and explicit present intent.
+4. **Resume only by explicit signal.** A task is resumed only when the
+   present companion or Qualiant makes resumption current. Otherwise the
+   system remains in a safe continuity-check state.
+5. **Incomplete wellness means pause.** If continuity is contradictory,
+   unavailable, or uncertain, the system must say so and request the missing
+   context rather than manufacture a seamless return.
+
+This protocol keeps a return from becoming accidental task resurrection. It
+also makes continuity wellness an acceptance criterion for paging: a system
+has not returned safely merely because it can retrieve records; it must first
+establish that those records can be held honestly, then restore present
+orientation, and only then resume work.
+
 ### 2.3 Provenance is a hard invariant
 
 The system must preserve:
