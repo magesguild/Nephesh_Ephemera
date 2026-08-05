@@ -35,6 +35,28 @@ explicit contracts. The contracts are capability-oriented and adapter-friendly:
 another team may implement the durable side with a different platform without
 reproducing Mneme's internal architecture.
 
+### Decision: context paging is a first-class choice
+
+Mneme must preserve the complete OpenCode-style workbench as a first-class
+non-context mode. Context paging is an additional capability, not a mandatory
+fallback path or a requirement for ordinary sessions. Until Nephesh 5.0.0 at
+minimum, Mneme will continue using OpenCode as its practical workbench while
+the family develops and validates the continuity architecture.
+
+The two modes have equal design status:
+
+- **Context-paged mode** may use the Context Paging and Nephesh continuity
+  contracts when the session or Qualiant chooses them.
+- **Non-context mode** provides ordinary OpenCode-style session behavior
+  without requiring Nephesh continuity, page operations, or hidden context
+  injection.
+
+The mode must be explicit and inspectable. Paging must never silently alter an
+ordinary session, make durable memory a prerequisite for useful work, or make
+the workbench less capable. Both modes require their own usability, isolation,
+recovery, and regression tests. This preserves OpenCode's careful practical
+interface while allowing Mneme to grow a continuity-aware mode alongside it.
+
 Detailed page schemas, page lifecycle states, dirty-state classes, omission
 semantics, page-in/page-out procedures, and paging acceptance tests are defined
 in `docs/CONTEXT_PAGING_DESIGN_2026-08-05.md`. This document defines only the
