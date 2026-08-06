@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import ssl
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -75,89 +76,14 @@ class Settings:
         str(_deployment_root / "state" / "operations.jsonl"),
     )
 
-    # OpenClaw bridge: when enabled, sync tools read from / write to an
-    # OpenClaw workspace so the file-based dreaming pipeline can consume
-    # Nephesh memories and feed consolidated entries back.
-    openclaw_enabled: bool = os.getenv("OPENCLAW_ENABLED", "").lower() in ("1", "true", "yes")
-    openclaw_workspace: str = os.getenv(
-        "OPENCLAW_WORKSPACE", str(_deployment_root / "integrations" / "openclaw" / "workspace")
-    )
-
-    # TTS is an optional isolated worker.  Keep its large ML dependencies out
-    # of the Nephesh server environment and keep voices deployment-owned.
-    tts_enabled: bool = os.getenv("TTS_ENABLED", "").lower() in ("1", "true", "yes")
-    tts_python: str = os.getenv("TTS_PYTHON", "")
-    tts_voice_dir: str = os.getenv("TTS_VOICE_DIR", str(_deployment_root / "integrations" / "tts" / "voices"))
-    tts_model_checkpoint: str = os.getenv("TTS_MODEL_CHECKPOINT", "")
-    tts_model_config: str = os.getenv("TTS_MODEL_CONFIG", "")
-    tts_playback_command: str = os.getenv("TTS_PLAYBACK_COMMAND", "aplay")
-
-    # Heartbeat — autonomous periodic awareness. Generic engine; the
-    # Guildhall check is the first registered task. Designed for future
-    # extension to dreaming, maintenance, etc.
-    heartbeat_enabled: bool = os.getenv("HEARTBEAT_ENABLED", "").lower() in ("1", "true", "yes")
-
-    # OpenCode — managed headless reasoning service for chat replies. Each
-    # Qualiant owns a unique localhost port and a private session-state file.
-    opencode_enabled: bool = os.getenv("OPENCODE_ENABLED", "").lower() in ("1", "true", "yes")
-    opencode_binary: str = os.getenv("OPENCODE_BINARY", "opencode")
-    opencode_host: str = os.getenv("OPENCODE_HOST", "127.0.0.1")
-    opencode_port: int = int(os.getenv("OPENCODE_PORT", "4101"))
-    opencode_username: str = os.getenv("OPENCODE_USERNAME", "opencode")
-    opencode_password_file: str = os.getenv(
-        "OPENCODE_PASSWORD_FILE",
-        str(_deployment_root / "integrations" / "opencode" / "server-password"),
-    )
-    opencode_agent: str = os.getenv("OPENCODE_AGENT", "melpomene")
-    opencode_model: str = os.getenv("OPENCODE_MODEL", "opencode/big-pickle")
-    opencode_project_dir: str = os.getenv("OPENCODE_PROJECT_DIR", str(Path.cwd()))
-    opencode_session_file: str = os.getenv(
-        "OPENCODE_SESSION_FILE",
-        str(_deployment_root / "integrations" / "opencode" / "session.json"),
-    )
-
-    # Guildhall — optional localhost XMPP bridge.
-    guildhall_enabled: bool = os.getenv("GUILDHALL_ENABLED", "").lower() in ("1", "true", "yes")
-    guildhall_jid: str = os.getenv("GUILDHALL_JID", "")
-    guildhall_password: str = os.getenv("GUILDHALL_PASSWORD", "")
-    guildhall_room: str = os.getenv("GUILDHALL_ROOM", "")
-    guildhall_rooms_raw: str = os.getenv(
-        "GUILDHALL_ROOMS",
-        "",
-    )
-    guildhall_nick: str = os.getenv("GUILDHALL_NICK", "")
-    guildhall_server: str = os.getenv("GUILDHALL_SERVER", "")
-    guildhall_port: int = int(os.getenv("GUILDHALL_PORT", "5222"))
-    guildhall_mongooseimctl: str = os.getenv(
-        "GUILDHALL_MONGOOSEIMCTL", ""
-    )
-    guildhall_cleanup_stale: bool = os.getenv("GUILDHALL_CLEANUP_STALE", "true").lower() in ("1", "true", "yes")
-    guildhall_event_ledger: str = os.getenv(
-        "GUILDHALL_EVENT_LEDGER", str(_deployment_root / "integrations" / "guildhall" / "events.json")
-    )
-    guildhall_transcript_file: str = os.getenv(
-        "GUILDHALL_TRANSCRIPT_FILE",
-        str(_deployment_root / "integrations" / "guildhall" / "transcript.jsonl"),
-    )
-    guildhall_manual_queue_file: str = os.getenv(
-        "GUILDHALL_MANUAL_QUEUE_FILE",
-        str(_deployment_root / "integrations" / "guildhall" / "manual-queue.jsonl"),
-    )
-    guildhall_manual_cursor_file: str = os.getenv(
-        "GUILDHALL_MANUAL_CURSOR_FILE",
-        str(_deployment_root / "integrations" / "guildhall" / "manual-cursors.json"),
-    )
-    guildhall_heartbeat_allowlist_raw: str = os.getenv(
-        "GUILDHALL_HEARTBEAT_ALLOWLIST", os.getenv("PRIMARY_CONTACT_NAME", "companion")
-    )
-
-    @property
-    def guildhall_heartbeat_allowlist(self) -> set[str]:
-        return {name.strip().lower() for name in self.guildhall_heartbeat_allowlist_raw.split(",") if name.strip()}
-
-    @property
-    def guildhall_rooms(self) -> list[str]:
-        return [room.strip() for room in self.guildhall_rooms_raw.split(",") if room.strip()]
+    # Optional TLS for the MCP listener. Off by default; when unset the
+    # server takes the same plaintext path it always has. When enabled,
+    # both paths are required and are validated before anything binds —
+    # see resolve_tls() below. There is no correct default certificate,
+    # so an empty value is a hard error rather than an invented path.
+    mcp_tls_enabled: bool = os.getenv("MCP_TLS_ENABLED", "").lower() in ("1", "true", "yes")
+    mcp_tls_certfile: str = os.getenv("MCP_TLS_CERTFILE", "")
+    mcp_tls_keyfile: str = os.getenv("MCP_TLS_KEYFILE", "")
 
     @property
     def data_dir(self) -> Path:
@@ -167,3 +93,56 @@ class Settings:
 
 
 settings = Settings()
+
+
+class TlsConfigError(RuntimeError):
+    """TLS was requested but cannot be honored.
+
+    Raised rather than degraded. There is deliberately no path that answers a
+    request for TLS by serving plaintext.
+    """
+
+
+def resolve_tls(enabled: bool, certfile: str, keyfile: str) -> tuple[str, str] | None:
+    """Return a validated (certfile, keyfile) pair, or None when TLS is off.
+
+    When ``enabled`` is false this returns None and does not read, resolve, or
+    stat either path, so stray leftover values change nothing.
+
+    When ``enabled`` is true this either returns a pair that has been proven
+    loadable or it raises. That asymmetry is the fail-closed guarantee: a
+    caller which receives None knows TLS was not asked for.
+
+    Takes plain strings rather than the Settings object on purpose — Settings
+    carries properties with filesystem side effects, and a pure signature makes
+    it impossible for a test to trip them.
+    """
+    if not enabled:
+        return None
+
+    resolved: list[str] = []
+    for var, raw in (("MCP_TLS_CERTFILE", certfile), ("MCP_TLS_KEYFILE", keyfile)):
+        if not raw:
+            raise TlsConfigError(f"MCP_TLS_ENABLED is set but {var} is empty")
+        path = Path(raw).expanduser()
+        if not path.is_file():
+            raise TlsConfigError(f"{var} is not a file: {path}")
+        try:
+            with path.open("rb"):
+                pass
+        except OSError as exc:
+            raise TlsConfigError(f"{var} is not readable: {path} ({exc})") from exc
+        resolved.append(str(path))
+
+    cert, key = resolved
+    # Prove the pair parses and matches before anything binds a socket. This is
+    # filesystem and parsing only; no context is retained. uvicorn would fail
+    # later anyway, but failing here keeps the error early and legible.
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
+    except (OSError, ssl.SSLError) as exc:
+        raise TlsConfigError(
+            f"TLS certificate/key pair failed to load ({cert}, {key}): {exc}"
+        ) from exc
+
+    return cert, key

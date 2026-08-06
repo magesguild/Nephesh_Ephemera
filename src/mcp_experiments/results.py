@@ -15,6 +15,7 @@ class ErrorResult(TypedDict, total=False):
 class HealthResult(TypedDict):
     status: Literal["ok"]
     mode: str
+    tls: bool
     tools_available: list[str]
 
 

@@ -20,8 +20,7 @@ class ConfigIsolationTests(unittest.TestCase):
                 "from mcp_experiments.config import settings; "
                 "print(settings.vector_db_path); "
                 "print(settings.instance_lock_file); "
-                "print(settings.openclaw_workspace); "
-                "print(settings.guildhall_event_ledger)"
+                "print(settings.operation_ledger_file)"
             )
             result = subprocess.run(
                 [sys.executable, "-c", script],

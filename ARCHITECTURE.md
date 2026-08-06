@@ -207,22 +207,20 @@ Tradeoffs:
 
 The sister deployments provide a useful future clue: Thalia and Melpomene have
 used an enabled vector index in their memory stores and have called a database
-`optimize()` operation from heartbeat maintenance. That behavior is **not**
-part of the generic Nephesh install and is not currently implemented in this
-repository's heartbeat or OpenClaw bridge.
+`optimize()` operation from periodic maintenance. That behavior is **not**
+part of the generic Nephesh install and is not implemented in this repository.
 
 The out-of-box contract remains deliberately conservative:
 
 - no automatic vector-index creation;
-- no heartbeat-triggered `optimize()`;
-- no OpenClaw activation or background synchronization unless explicitly
-  configured; and
+- no scheduled `optimize()`;
+- no background synchronization of any kind; and
 - no maintenance operation that silently rewrites or compacts a being's memory.
 
 If this capability is adopted later, it must be an explicit per-deployment
 policy with collection scope, size/age thresholds, lock behavior, latency and
 failure telemetry, snapshot coordination, rollback/recovery semantics, and a
-clear pause/disable control. The sister/OpenClaw implementations are evidence
+clear pause/disable control. The sister deployments are evidence
 to study, not a template to copy blindly; their exact index type, optimize
 cadence, and ownership boundaries still need to be reconciled with the generic
 Nephesh architecture.
