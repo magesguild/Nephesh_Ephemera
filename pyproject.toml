@@ -10,8 +10,10 @@ dependencies = [
     "pyarrow>=15.0.0",
     "httpx>=0.28.0",
     "python-dotenv>=1.0.0",
-    "slixmpp>=1.17.0",
 ]
+
+[project.optional-dependencies]
+guildhall = ["slixmpp>=1.17.0"]
 
 [project.scripts]
 nephesh = "mcp_experiments.__main__:main"

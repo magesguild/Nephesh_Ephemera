@@ -65,6 +65,10 @@ class Settings:
         "NEPHESH_INSTANCE_LOCK_FILE",
         str(_deployment_root / "state" / "nephesh-instance.lock"),
     )
+    operation_ledger_file: str = os.getenv(
+        "NEPHESH_OPERATION_LEDGER",
+        str(_deployment_root / "state" / "operations.jsonl"),
+    )
 
     # OpenClaw bridge: when enabled, sync tools read from / write to an
     # OpenClaw workspace so the file-based dreaming pipeline can consume

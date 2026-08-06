@@ -7,6 +7,11 @@ from starlette.responses import JSONResponse
 from .config import settings
 from .compliance import ServerMode
 from .tools import memory, vector_db
+
+
+def _structured(value):
+    """Accept both new structured tool results and legacy JSON strings."""
+    return value if isinstance(value, dict) else json.loads(value)
 from .tools import get_registered_names
 
 
@@ -23,7 +28,7 @@ def register_web_ui(mcp) -> None:
     @mcp.custom_route("/api/collections", methods=["GET"])
     async def api_list_collections(request):
         try:
-            return JSONResponse(json.loads(await vector_db.list_collections()))
+            return JSONResponse(_structured(await vector_db.list_collections()))
         except AssertionError:
             return JSONResponse({"error": "Database not initialized"}, status_code=503)
         except Exception as e:
@@ -32,7 +37,7 @@ def register_web_ui(mcp) -> None:
     @mcp.custom_route("/api/collections/{name}", methods=["GET"])
     async def api_collection_info(request):
         try:
-            return JSONResponse(json.loads(await vector_db.collection_info(request.path_params["name"])))
+            return JSONResponse(_structured(await vector_db.collection_info(request.path_params["name"])))
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=404)
         except Exception as e:
@@ -42,7 +47,7 @@ def register_web_ui(mcp) -> None:
     async def api_search(request):
         try:
             body = await request.json()
-            return JSONResponse(json.loads(await vector_db.search(
+            return JSONResponse(_structured(await vector_db.search(
                 collection_name=request.path_params["name"],
                 query=body.get("query", ""),
                 n_results=body.get("n_results", 10),
@@ -57,7 +62,7 @@ def register_web_ui(mcp) -> None:
     async def api_ingest(request):
         try:
             body = await request.json()
-            return JSONResponse(json.loads(await vector_db.ingest(
+            return JSONResponse(_structured(await vector_db.ingest(
                 collection_name=request.path_params["name"],
                 documents=body.get("documents", []),
                 metadata=body.get("metadata"),
@@ -78,7 +83,7 @@ def register_web_ui(mcp) -> None:
     async def api_memory_ingest(request):
         try:
             body = await request.json()
-            return JSONResponse(json.loads(await memory.memory_ingest(
+            return JSONResponse(_structured(await memory.memory_ingest(
                 text=body.get("text", ""),
                 memory_type=body.get("memory_type", "technical"),
                 importance=body.get("importance", 3),
@@ -106,7 +111,7 @@ def register_web_ui(mcp) -> None:
         try:
             n = request.query_params.get("n")
             collection = request.query_params.get("collection")
-            return JSONResponse(json.loads(await memory.memory_sample(
+            return JSONResponse(_structured(await memory.memory_sample(
                 n=int(n) if n else 8,
                 include_dreams=request.query_params.get("include_dreams", "false").lower() == "true",
                 include_retired=request.query_params.get("include_retired", "false").lower() == "true",
@@ -119,7 +124,7 @@ def register_web_ui(mcp) -> None:
     async def api_memory_recall(request):
         try:
             body = await request.json()
-            return JSONResponse(json.loads(await memory.memory_recall(
+            return JSONResponse(_structured(await memory.memory_recall(
                 query=body.get("query", ""),
                 memory_type=body.get("memory_type"),
                 n_results=body.get("n_results", 10),
@@ -138,7 +143,7 @@ def register_web_ui(mcp) -> None:
     async def api_memory_provenance_audit(request):
         try:
             collection = request.query_params.get("collection")
-            return JSONResponse(json.loads(await memory.memory_provenance_audit(
+            return JSONResponse(_structured(await memory.memory_provenance_audit(
                 collection_name=collection,
             )))
         except Exception as e:
@@ -152,7 +157,7 @@ def register_web_ui(mcp) -> None:
         try:
             limit = request.query_params.get("limit")
             collection = request.query_params.get("collection")
-            return JSONResponse(json.loads(await memory.memory_context(
+            return JSONResponse(_structured(await memory.memory_context(
                 limit=int(limit) if limit else None,
                 include_dreams=request.query_params.get("include_dreams", "false").lower() == "true",
                 include_retired=request.query_params.get("include_retired", "false").lower() == "true",

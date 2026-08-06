@@ -10,20 +10,6 @@ from . import info, memory, vector_db
 
 _TOOL_MODULES = [vector_db, memory, info]
 
-if settings.tts_enabled:
-    from . import tts
-
-    _TOOL_MODULES.append(tts)
-
-# Conditionally register OpenClaw bridge tools when enabled.
-if settings.openclaw_enabled:
-    from . import openclaw_sync
-    _TOOL_MODULES.append(openclaw_sync)
-
-if settings.guildhall_enabled:
-    from . import guildhall
-    _TOOL_MODULES.append(guildhall)
-
 
 def register_all(app: FastMCP) -> None:
     for mod in _TOOL_MODULES:
