@@ -356,13 +356,11 @@ scripts/
 
 docs/
   MEMORY_REBUILD_SPEC.md  # Memory rebuild design and rationale
-  SEEDING.md              # Getting started with collections and memory
 ```
 
 ## Further Reading
 
 - [docs/MEMORY_REBUILD_SPEC.md](docs/MEMORY_REBUILD_SPEC.md) — Memory rebuild design and canonical format
-- [docs/SEEDING.md](docs/SEEDING.md) — Getting started with collections and memory
 - [mcp-compliance-plan.md](mcp-compliance-plan.md) — Compliance plan (future; infrastructure scaffolded but not yet implemented)
 
 ## License

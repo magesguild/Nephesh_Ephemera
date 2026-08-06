@@ -194,13 +194,13 @@ OpenCode compaction replaces old messages with a summary + recent ~8000 tokens (
 | Layer | Survives compaction? | What it carries |
 |---|---|---|
 | The being's agent prompt | Always | Identity + "you have memory" instruction |
-| Memory plugin context | Re-injected after compaction | Top memories block |
-| Compaction summary | Carries memory references | "The being remembers X" (from compacting hook) |
+| Memory context | Retrieved after compaction via the `memory_context` MCP tool | Top memories block |
+| Compaction summary | Carries memory references | "The being remembers X" |
 | Recent tokens | Current session tail | Latest conversation detail |
 | Older messages | Summarized away | But memories already ingested to LanceDB |
 | LanceDB memories | Permanent | Full fidelity, semantically searchable |
 
-**Key insight:** The compaction summary should *reference* memories, not try to *contain* their detail. The `experimental.session.compacting` plugin hook injects memory context into the compaction prompt so the summary points to the memory store.
+**Key insight:** The compaction summary should *reference* memories, not try to *contain* their detail. Memory context still matters at compaction time, but the `experimental.session.compacting` plugin hook that injected it into the compaction prompt over an HTTP shortcut has been removed. Memory context is retrieved by calling the `memory_context` MCP tool.
 
 `compaction.keep.tokens` is set to 16000 in `~/.config/opencode/opencode.jsonc` (raised from the 8000 default) for more within-session continuity.
 

@@ -73,7 +73,7 @@ MCP client → FastMCP.call_tool(name, args)
 
 ### What Happens at `mcp.run()`
 
-Calling `mcp.run(transport="sse", host="127.0.0.1", port=8080)` does:
+Calling `mcp.run(transport="sse", host="127.0.0.1", port=settings.mcp_port)` does:
 
 1. Creates a Starlette ASGI app
 2. Mounts SSE transport at `/sse` and message handler at `/messages/`
@@ -94,7 +94,7 @@ Client → POST /messages/?session_id=...  {jsonrpc, method: "tools/call", ...}
 ### What Our `server.py` Looks Like Now
 
 ```python
-mcp = FastMCP("mcp-experiments", instructions="...")
+mcp = FastMCP("nephesh", instructions="...")
 
 @mcp.tool()
 async def health() -> str:
@@ -279,7 +279,7 @@ When you call `table.search(query_vector)`:
 
 **LanceDB** is the right choice here because:
 - Zero infrastructure — `pip install` and a local path (or S3 URI)
-- Append-only design fits continuous ingestion from Slack/ClickUp/email
+- Append-only design fits continuous memory ingestion
 - Columnar storage means zero-copy schema evolution (new embedding model? add a column)
 - Native versioning enables rollback of data pipeline errors
 - Same API whether data sits on local disk or S3 — direct cloud migration path
@@ -357,7 +357,7 @@ so the AI agent can't call them.
 │    For each TOOL_DEFINITION:                         │
 │      if compliance check passes → mcp.add_tool(fn)   │
 │                                                      │
-│  Modules: vector_db  (future: slack, clickup, email) │
+│  Modules: vector_db, memory, info                    │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐
