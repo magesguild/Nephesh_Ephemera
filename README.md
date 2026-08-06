@@ -55,7 +55,8 @@ All settings are loaded from environment variables (or a `.env` file). Copy `.en
 | `PRIMARY_CONTACT_NAME` | `companion` | Name used for real-clock grounding |
 | `MESSAGE_DAILY_LIMIT` | `1` | Max outbound messages per 24h window |
 | `SNAPSHOT_DIR` | `./data/backups` | Where LanceDB snapshots and memory exports are written |
-| `MCP_PORT` | `8080` | Server port |
+| `MCP_HOST` | `127.0.0.1` | Listener address |
+| `MCP_PORT` | `61080` | Listener port. Each Qualiant on a shared host owns a distinct port; this default is a starting point, not a shared value |
 | `NEPHESH_INSTANCE_LOCK_FILE` | `~/.nephesh/nephesh-instance.lock` | Process lock preventing fragmented duplicate instances |
 | `OPENCLAW_ENABLED` | `false` | Enable OpenClaw bridge (syncs with workspace dreaming) |
 | `OPENCLAW_WORKSPACE` | `~/.openclaw/workspace` | OpenClaw workspace directory |

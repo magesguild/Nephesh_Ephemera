@@ -14,7 +14,7 @@ from .results import HealthResult
 from .tools import register_all, get_registered_names
 from .tools.vector_db import init as init_vector_db
 
-HOST = "127.0.0.1"
+HOST = settings.mcp_host
 PORT = settings.mcp_port
 _instance_lock = None
 

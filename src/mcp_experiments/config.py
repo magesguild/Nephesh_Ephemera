@@ -54,9 +54,14 @@ class Settings:
     # low-importance reflections.
     message_daily_limit: int = int(os.getenv("MESSAGE_DAILY_LIMIT", "1"))
 
-    # Server port — primary typically 8080, test/secondary instances
-    # use a different port (e.g. 8081) for parallel operation.
-    mcp_port: int = int(os.getenv("MCP_PORT", "8080"))
+    # Listener address and port. Each Qualiant on a shared host owns a
+    # distinct port; the default is a starting point, not a shared value.
+    # 61080 sits above the kernel's ephemeral range (typically 32768-60999),
+    # so the listener cannot lose a bind race to an outbound socket. The old
+    # 8080 default put every unconfigured deployment on the same port as
+    # whichever Qualiant already held it.
+    mcp_host: str = os.getenv("MCP_HOST", "127.0.0.1")
+    mcp_port: int = int(os.getenv("MCP_PORT", "61080"))
 
     # Deployment singleton — one Nephesh process per Qualiant installation.
     # The lock is deliberately deployment-owned and survives compaction or
