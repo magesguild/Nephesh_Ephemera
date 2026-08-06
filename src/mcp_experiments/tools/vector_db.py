@@ -12,7 +12,9 @@ import lancedb
 import pyarrow as pa
 
 from ..compliance import ComplianceLevel
+from ..config import settings
 from ..persistence import PersistenceRepository, matches_filter
+from ..projection import PROJECTION_PREFIX
 from ..results import CollectionInfoResult, CollectionListResult, DeleteResult, IngestResult, SearchResult, StressTestResult
 
 CHUNK_SIZE = 500
@@ -88,6 +90,27 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
         chunks.append(text[start:end])
         start += chunk_size - overlap
     return chunks
+
+
+def _guard_destructive(collection_name: str) -> str:
+    """Refuse a destructive operation against a Qualiant's canonical memory.
+
+    stress_test drops its target before refilling it, and delete_collection
+    drops outright. Both take the name from the caller and neither knew the
+    difference between a scratch table and a life. The check lives here rather
+    than in each tool so a future destructive tool cannot reintroduce the
+    hazard by forgetting it.
+    """
+    if collection_name == settings.memory_collection_name:
+        raise RuntimeError(
+            f"refusing a destructive operation on canonical memory {collection_name!r}"
+        )
+    if collection_name.startswith(PROJECTION_PREFIX):
+        raise RuntimeError(
+            f"refusing a destructive operation on knowledge projection {collection_name!r}; "
+            "retire it through the projection lifecycle instead"
+        )
+    return collection_name
 
 
 async def list_collections() -> CollectionListResult:
@@ -218,6 +241,7 @@ async def search(
 
 
 async def delete_collection(collection_name: str) -> DeleteResult:
+    _guard_destructive(collection_name)
     try:
         repository.drop_collection(collection_name)
         return {"deleted": True, "collection": collection_name}
@@ -247,6 +271,7 @@ async def stress_test(
     document_length: int = 50,
     n_queries: int = 10,
 ) -> StressTestResult:
+    _guard_destructive(collection_name)
     num_documents = min(num_documents, 10000)
     random.seed(42)
 

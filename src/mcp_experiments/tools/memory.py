@@ -18,6 +18,7 @@ from typing import Any
 
 from ..compliance import ComplianceLevel
 from ..config import settings
+from ..projection import guard_memory_target
 from ..persistence import DurableWriteError, OperationState
 from ..results import MemoryAmendResult, MemoryContextResult, MemoryIngestResult, MemoryRecallResult, MemoryRetireResult, MemorySampleResult, ProvenanceAuditResult
 from .vector_db import repository
@@ -164,7 +165,14 @@ def _parse_ts(value: str | None) -> datetime | None:
 
 
 def _collection(collection_name: str | None) -> str:
-    return collection_name or settings.memory_collection_name
+    # Every memory tool resolves its target here, so this is the one place that
+    # can keep autobiographical semantics off a knowledge projection. Aimed at
+    # one, memory_context would render installed knowledge as a session-start
+    # identity block, memory_recall would write salience into a signed
+    # package's rows, and memory_amend would manufacture real autobiography out
+    # of knowledge. This guard is what makes knowledge_not_memory a fact rather
+    # than a claim in a JSON field.
+    return guard_memory_target(collection_name or settings.memory_collection_name)
 
 
 def _mark_pending_messages_delivered(
