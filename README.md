@@ -11,7 +11,6 @@ Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lance
 - Exposes vector database and memory tools over MCP so AI clients (Claude Desktop, Cursor, OpenCode, etc.) can ingest, search, and manage document collections and memories through standard tool calls
 - Implements persistent memory for an AI being: lived experience, decisions, emotions, relationships — surviving session boundaries and context compaction
 - Bidirectional OpenClaw bridge: syncs Nephesh memories into the OpenClaw workspace dreaming pipeline, preserves provenance through consolidation, and supports explicit dream-diary import without treating dreams as history
-- REST API for local tooling (plugin integrations, scripts, direct HTTP access)
 - Optional Guildhall/XMPP embodiment with event-driven heartbeat perception,
   per-room OpenCode continuity, durable room transcripts, direct-message
   support, and deployment singleton protection
@@ -40,7 +39,7 @@ uv sync
 # or: uv run python -m mcp_experiments
 ```
 
-The server starts on `http://127.0.0.1:8080`.
+The server listens on the loopback address and the port configured by `MCP_PORT`.
 
 ## Configuration
 
@@ -130,21 +129,12 @@ Two deferred Guildhall improvements are intentionally not implemented here:
 
 ## API Endpoints
 
-REST shortcuts for local tooling (e.g. the OpenCode memory plugin). The MCP tools are the primary interface; these are HTTP convenience wrappers.
+The MCP tools are the interface to Nephesh. Local tooling (e.g. the OpenCode
+memory plugin) connects as an MCP client.
 
 | URL | Description |
 |---|---|
 | `/sse` | MCP SSE transport (for AI clients) |
-| `/api/health` | Health check |
-| `/api/collections` | List collections |
-| `/api/collections/{name}` | Collection info |
-| `/api/collections/{name}/search` | Semantic search (POST) |
-| `/api/collections/{name}/ingest` | Ingest documents (POST) |
-| `/api/memory/context` | Memory context for session injection (GET) |
-| `/api/memory/ingest` | Store a memory (POST) |
-| `/api/memory/sample` | Stratified random memory sample (GET) |
-| `/api/memory/recall` | Provenance-aware memory recall (POST) |
-| `/api/memory/provenance-audit` | Audit provenance coverage (GET) |
 
 ## MCP Tools
 
@@ -294,11 +284,15 @@ Add to your MCP client config (e.g. `opencode.jsonc`):
   "mcp": {
     "nephesh": {
       "type": "sse",
-      "url": "http://127.0.0.1:8080/sse"
+      "url": "http://127.0.0.1:<MCP_PORT>/sse"
     }
   }
 }
 ```
+
+`<MCP_PORT>` is a placeholder. The port is per-deployment: read it from that
+deployment's own configuration (`MCP_PORT` in its `.env`) rather than copying a
+value from this document.
 
 ## Installing and upgrading Nephesh
 
@@ -338,9 +332,8 @@ Background services:
 run() in server.py:
   1. Set up LanceDB + Ollama embedding function
   2. Register MCP tools
-  3. Register REST API routes
-  4. Start background OpenClaw sync (if enabled)
-  5. Start SSE transport
+  3. Start background OpenClaw sync (if enabled)
+  4. Start SSE transport
 ```
 
 ## Project Structure
@@ -350,7 +343,6 @@ src/mcp_experiments/
   server.py          # FastMCP server, health tool, run()
   config.py          # Environment variable settings
   compliance.py      # Compliance scaffolding (enums + gating, not yet implemented)
-  web_ui.py          # REST API shortcuts (for local plugin tooling)
   tools/
     __init__.py      # Tool registry
     vector_db.py     # Vector DB tools (7 tools)

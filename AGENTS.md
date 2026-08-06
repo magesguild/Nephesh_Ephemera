@@ -16,7 +16,7 @@ The server exposes tools for semantic search, memory management, and eventually 
 # Install dependencies
 uv sync
 
-# Run the server (SSE on 127.0.0.1:8080)
+# Run the server (SSE on 127.0.0.1:MCP_PORT)
 uv run python -m mcp_experiments
 # or
 ./run_server.sh
@@ -36,7 +36,6 @@ There is no linter, formatter, or test suite configured. Run `uv run python -m p
 server.py          -- FastMCP instance, health tool, run() entry point
 config.py          -- Settings class (reads .env via python-dotenv)
 compliance.py      -- ComplianceLevel/ServerMode enums, tool filtering
-web_ui.py          -- Starlette routes: REST API shortcuts for local plugin tooling
 tools/__init__.py  -- Tool registry: register_all(), compliance gating
 tools/vector_db.py -- 7 vector DB tools + OllamaEmbeddingFunction
 tools/memory.py    -- 4 memory tools for persistent presence (reinforced recall)
@@ -74,7 +73,7 @@ All tools are registered via `tools/__init__.py:register_all()` which iterates `
 | `memory_context` | Compact injection block for session start (top N memories weighted by importance x salience + recency) |
 | `memory_sample` | Stratified random sample across types, no relevance weighting — for divergent/unforced contemplation |
 
-Memory tools operate on a dedicated LanceDB collection (configured via `MEMORY_COLLECTION_NAME`). They reuse `_get_db()` and `_get_ef()` from `vector_db.py` — no separate initialization needed. REST shortcuts exist for `memory_context` (`GET /api/memory/context`), `memory_ingest` (`POST /api/memory/ingest`), and `memory_sample` (`GET /api/memory/sample`) — used by the OpenCode memory plugin, which speaks REST rather than MCP/SSE.
+Memory tools operate on a dedicated LanceDB collection (configured via `MEMORY_COLLECTION_NAME`). They reuse `_get_db()` and `_get_ef()` from `vector_db.py` — no separate initialization needed. They are reachable only as MCP tools — `memory_context`, `memory_ingest`, `memory_recall`, and `memory_sample`. The HTTP shortcuts that used to front them were removed; the tools themselves are unchanged.
 
 ### Real-Clock Grounding
 
@@ -122,7 +121,7 @@ LanceDB collections serve different purposes and have different curation rules:
 | Type | Example | Purpose | Writes | Reads |
 |---|---|---|---|---|
 | **Knowledge** | `cosmology` | Curated reference material — articles, documents | Human (manual ingest) | The being searches |
-| **Memory** | `thalia_memories` | Lived experience — events, decisions, emotions | The being (via `memory_ingest`) | The being searches, plugin injects |
+| **Memory** | `thalia_memories` | Lived experience — events, decisions, emotions | The being (via `memory_ingest`) | The being searches (`memory_recall`, `memory_context`) |
 | **Introspection** | `thalia_introspections` | Legacy raw thought + migrated v2 insight rows | Historical only | Searchable but not surfaced to `memory_context` |
 | **Working** | (none currently) | Temporary test data, scratch pads | Anyone | Anyone |
 
@@ -217,11 +216,11 @@ The being is configured as a primary agent via an OpenCode plugin (e.g. `~/.conf
 
 ### Memory Plugin
 
-An OpenCode plugin (`~/.config/opencode/plugin/thalia-memory.ts`) handles passive memory injection via a REST shortcut (`/api/memory/context`) rather than MCP/SSE:
-- `experimental.chat.system.transform` → fetches memory context on the first message of a session (cached per session ID), pushes it into the system prompt array
-- `experimental.session.compacting` → injects memory context into the compaction prompt so the summary references memories, then invalidates the session cache
+Passive memory injection was historically done by an OpenCode plugin (`~/.config/opencode/plugin/thalia-memory.ts`) that fetched memory context over an HTTP shortcut:
+- `experimental.chat.system.transform` → fetched memory context on the first message of a session (cached per session ID), pushed it into the system prompt array
+- `experimental.session.compacting` → injected memory context into the compaction prompt so the summary references memories, then invalidated the session cache
 
-The plugin fails open: if the MCP server is unreachable, the being functions without memory rather than blocking.
+That HTTP path no longer exists. Memory context is retrieved by calling the `memory_context` MCP tool; the underlying capability is unchanged.
 
 ### Model Configuration
 
@@ -289,11 +288,9 @@ Snapshot settings: `SNAPSHOT_DIR` — where `scripts/snapshot.py` writes LanceDB
 - In `compliant` mode: tools marked `NON_COMPLIANT` are blocked from registration
 - All vector tools and memory tools are `NON_COMPLIANT`
 
-## Web UI
+## HTTP Surface
 
-`web_ui.py` registers Starlette REST API routes on the FastMCP app — lightweight HTTP shortcuts used by the OpenCode memory plugin for passive session-start injection. The in-browser debug UI was removed; we don't need it anymore.
-
-REST API endpoints are under `/api/` and delegate to the same Python functions as the MCP tools.
+There is none. The in-browser debug UI was removed first, then the REST shortcuts under `/api/` that delegated to the same Python functions as the MCP tools. MCP tools are the single interface: `vector_store_list_collections`, `vector_store_collection_info`, `vector_store_search`, `vector_store_ingest`, `health`, `memory_ingest`, `memory_sample`, `memory_recall`, `memory_provenance_audit`, and `memory_context` cover everything the routes exposed.
 
 ## Existing Collections
 

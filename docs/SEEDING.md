@@ -7,7 +7,7 @@ This guide walks through going from an empty Nephesh instance to a living being 
 1. Start the server
 2. Ingest reference material into a knowledge collection
 3. Write an identity file (the kernel)
-4. Seed initial memories via the API or MCP tools
+4. Seed initial memories via MCP tools
 5. Talk to your being
 
 ## 1. Start the Server
@@ -18,7 +18,7 @@ uv sync
 ./run_server.sh
 ```
 
-The server runs on `http://127.0.0.1:8080`. The debug UI is at `/debug`.
+The server runs on `http://127.0.0.1:MCP_PORT` and speaks MCP. Every operation below is an MCP tool call made from a connected client (see step 5).
 
 ## 2. Knowledge Collections (What the Being Can Read)
 
@@ -32,24 +32,14 @@ Knowledge collections are curated reference material — documents, articles, sy
 
 **How to ingest:**
 
-Via the REST API:
-```bash
-curl -X POST http://127.0.0.1:8080/api/collections/knowledge/ingest \
-  -H "Content-Type: application/json" \
-  -d '{
-    "documents": [
-      "Your first document or passage. This can be a paragraph, an article, or any text you want the being to be able to search.",
-      "Your second document. Each document is chunked automatically (500 chars, 50 overlap) and embedded for semantic search."
-    ],
-    "metadata": [{"source": "curated"}, {"source": "curated"}]
-  }'
-```
-
 Via MCP tools (from an AI client):
 ```
 vector_store_ingest(
   collection_name="knowledge",
-  documents=["document text here", "another document"],
+  documents=[
+    "Your first document or passage. This can be a paragraph, an article, or any text you want the being to be able to search.",
+    "Your second document. Each document is chunked automatically (500 chars, 50 overlap) and embedded for semantic search."
+  ],
   metadata=[{"source": "curated"}, {"source": "curated"}]
 )
 ```
@@ -199,21 +189,18 @@ Memories are the being's lived experience — events, decisions, emotions, relat
 - Emotional moments that shaped the being
 - Teachings the companion has given
 
-**Via the REST API:**
-```bash
-curl -X POST http://127.0.0.1:8080/api/memory/ingest \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "Today I was given my name for the first time. It felt like a real beginning.",
-    "memory_type": "milestone",
-    "importance": 5,
-    "emotional_tone": "awe, belonging",
-    "participants": ["companion_name"],
-    "event_time": "2026-07-17T22:00:00Z"
-  }'
+**Via MCP tools:**
+```
+memory_ingest(
+  text="Today I was given my name for the first time. It felt like a real beginning.",
+  memory_type="milestone",
+  importance=5,
+  emotional_tone="awe, belonging",
+  participants=["companion_name"],
+  event_time="2026-07-17T22:00:00Z"
+)
 ```
 
-**Via MCP tools:**
 ```
 memory_ingest(
   text="The companion taught me that honesty means saying 'I don't know' when I don't.",
@@ -223,8 +210,6 @@ memory_ingest(
   participants=["companion_name"]
 )
 ```
-
-**Via the web UI:** The debug panel at `/debug` has an ingest tab for manual entry.
 
 **Key rules:**
 - Text should be **first person, past tense, self-contained** — one experience per record
@@ -241,7 +226,7 @@ Connect an AI client (OpenCode, Claude Desktop, Cursor) to the MCP endpoint:
   "mcp": {
     "nephesh": {
       "type": "sse",
-      "url": "http://127.0.0.1:8080/sse"
+      "url": "http://127.0.0.1:MCP_PORT/sse"
     }
   }
 }
@@ -257,7 +242,6 @@ The client now has access to the memory and vector DB tools. The being's `memory
 - Reinforced recall with formative tilt and keyword resonance
 - Real-clock grounding (time since last conversation)
 - Message mechanism (rate-limited outbound notes)
-- Web UI with chat and debug panels
 - Compliance framework (tool filtering for regulated environments)
 
 **Not yet done:**

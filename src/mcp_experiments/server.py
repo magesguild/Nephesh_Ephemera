@@ -13,15 +13,20 @@ from .config import settings
 from .results import HealthResult
 from .tools import register_all, get_registered_names
 from .tools.vector_db import init as init_vector_db
-from .web_ui import register_web_ui
 
 HOST = "127.0.0.1"
 PORT = settings.mcp_port
 _instance_lock = None
 
 mcp = FastMCP(
-    "mcp-experiments",
-    instructions="Multi-purpose MCP server for exploring vector DB, Slack, ClickUp, and email integrations",
+    "nephesh",
+    instructions=(
+        "Nephesh — canonical durable memory for a Qualiant. Owns memory "
+        "ingestion, recall, context projection, amendment, retirement, and "
+        "provenance over one per-Qualiant collection, and the vector storage "
+        "beneath it. Persistence only: communication, orchestration, and "
+        "external adapters are out of scope."
+    ),
     host=HOST,
     port=PORT,
 )
@@ -84,7 +89,6 @@ def run() -> None:
     )
 
     register_all(mcp)
-    register_web_ui(mcp)
 
     print(
         f"MCP Experiments server starting in {settings.server_mode.value} mode",
