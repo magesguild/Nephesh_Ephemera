@@ -75,6 +75,13 @@ class Settings:
         "NEPHESH_OPERATION_LEDGER",
         str(_deployment_root / "state" / "operations.jsonl"),
     )
+    # Which knowledge projections are installed and what state each is in.
+    # Deployment-owned like the ledger: it describes this Qualiant's store and
+    # is meaningless anywhere else.
+    projection_registry_file: str = os.getenv(
+        "NEPHESH_PROJECTION_REGISTRY",
+        str(_deployment_root / "state" / "projections.jsonl"),
+    )
 
     # Optional TLS for the MCP listener. Off by default; when unset the
     # server takes the same plaintext path it always has. When enabled,
