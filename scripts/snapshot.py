@@ -2,7 +2,7 @@
 """
 Snapshot — memory backup and restore verification.
 
-Part of the 3.0.0 memory rebuild (docs/MEMORY_REBUILD_SPEC.md §6).
+Part of the 3.0.0 memory rebuild (docs/NEPHESH_DESIGN.md section 2).
 Two artifacts per snapshot:
   1. Full tar.gz of the LanceDB directory (everything: memories,
      introspections, study, foundation, cosmology).

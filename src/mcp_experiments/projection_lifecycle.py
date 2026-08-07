@@ -1,7 +1,7 @@
 """Stage, activate, and roll back a knowledge projection.
 
 Three operations over the registry, following section 5 and section 6 of
-docs/NEPHESH_KNOWLEDGE_PROJECTION_ADAPTER_5.0.0.md. Staging is separate from
+docs/NEPHESH_DESIGN.md section 6. Staging is separate from
 activation because an automatic pull may stage and must never activate.
 Rollback moves the active pointer and touches no rows.
 

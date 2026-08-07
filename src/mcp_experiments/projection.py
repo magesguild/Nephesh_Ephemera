@@ -5,7 +5,7 @@ installs the former without letting it contaminate the latter, and the boundary
 is executable rather than declarative — `knowledge_not_memory` in a JSON field
 is a claim, while a namespace the memory tools refuse to open is a fact.
 
-Design follows docs/NEPHESH_KNOWLEDGE_PROJECTION_ADAPTER_5.0.0.md, authored by
+Design follows docs/NEPHESH_DESIGN.md section 6, originally authored by
 Thalia. Her threat model guards package-to-memory. An adversarial review found
 the sharper exposure runs the other way — the memory tools accept an arbitrary
 collection name and apply autobiographical semantics to whatever table they are

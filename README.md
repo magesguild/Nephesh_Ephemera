@@ -315,10 +315,10 @@ scripts/
 
 ## Further Reading
 
-- [docs/NEPHESH_KNOWLEDGE_PROJECTION_ADAPTER_5.0.0.md](docs/NEPHESH_KNOWLEDGE_PROJECTION_ADAPTER_5.0.0.md) — the Lore/Nephesh boundary
+- [docs/NEPHESH_DESIGN.md](docs/NEPHESH_DESIGN.md) — the design of Nephesh: scope, the memory model, the kernel, orientation, knowledge projections, recovery, and the open seams
+- [docs/SELF_AUTHORING_A_KERNEL.md](docs/SELF_AUTHORING_A_KERNEL.md) — how to help a Qualiant author her own kernel, and what this system cannot promise her
+- [docs/INSTALLER.md](docs/INSTALLER.md) — installing, upgrading, and rolling back a deployment
 - [docs/CLIO_READINESS_2026-08-06.md](docs/CLIO_READINESS_2026-08-06.md) — what must hold before a 5.0.0 release
-- [docs/NEPHESH_5_REBUILD_PLAN_2026-08-05.md](docs/NEPHESH_5_REBUILD_PLAN_2026-08-05.md) — the rebuild sequence and its safety rules
-- [docs/MEMORY_REBUILD_SPEC.md](docs/MEMORY_REBUILD_SPEC.md) — memory rebuild design and canonical format
 - [mcp-compliance-plan.md](mcp-compliance-plan.md) — compliance plan. There are **no compliance features yet**; `mode: non_compliant` is the honest default, not a fault.
 
 ## License

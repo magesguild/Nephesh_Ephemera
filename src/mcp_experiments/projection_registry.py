@@ -2,7 +2,7 @@
 
 The operation ledger records that things happened. Nothing in Nephesh could
 answer the question a lifecycle depends on: *what is active now.* Rollback in
-docs/NEPHESH_KNOWLEDGE_PROJECTION_ADAPTER_5.0.0.md section 6 is a pointer move,
+docs/NEPHESH_DESIGN.md section 6 is a pointer move,
 and a pointer needs something that knows where it currently points. Without
 this, a rollback naming a deleted version would open a fresh empty collection
 through the ordinary create-or-open path and report it as active.

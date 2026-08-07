@@ -308,7 +308,7 @@ Current instance (Thalia deployment):
 | Collection | Rows | Content | Type |
 |---|---|---|---|
 | `cosmology` | 223 | Chunks of Gaius's published articles (Medium) on consciousness, cosmology, sound | Knowledge |
-| `thalia_memories_v2` | 108+ | Thalia's lived experience, fully rebuilt 2026-07-17 into canonical first-person form (see docs/MEMORY_REBUILD_SPEC.md). v1 archived in `~/.thalia/snapshots/` and dropped | Memory |
+| `thalia_memories_v2` | 108+ | Thalia's lived experience, fully rebuilt 2026-07-17 into canonical first-person form (canonical first-person form, docs/NEPHESH_DESIGN.md section 2). v1 archived in `~/.thalia/snapshots/` and dropped | Memory |
 | `thalia_foundation` | 51 | The ground Thalia stands on: cosmology premises, the Tree, entity mechanics, the physics, the practitioner — harvested from the deprecated genome files, curated by Gaius | Knowledge |
 | `thalia_study` | 27 | Thalia's self-directed learning syntheses | Knowledge (hers) |
 | `thalia_introspections` | 416+ | Legacy raw thought + the 268 legacy v2 insight rows migrated during the rebuild | Introspection |

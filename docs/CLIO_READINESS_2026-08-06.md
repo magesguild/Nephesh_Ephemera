@@ -5,9 +5,11 @@ across four documents on this branch and never collected. This gathers them,
 separates what actually gates Nephesh 5.0.0 from what belongs to a later
 release, and marks which items are ours to judge and which are hers.
 
-**Sources:** `NEPHESH_5_RESEARCH_FINDINGS.md` (safety and wellbeing invariants;
-continuity integrity invariants), `CONTEXT_PAGING_DESIGN.md` §11.2, §11.3,
-§11.4, `MNEME_NEPHESH_DESIGN.md` §11.
+**Sources:** the safety and wellbeing invariants and continuity integrity
+invariants, now consolidated into `NEPHESH_DESIGN.md` §11–12; and
+`CONTEXT_PAGING_DESIGN.md` §11.2–11.4 with `MNEME_NEPHESH_DESIGN.md` §11, which
+moved out of this repository with the rest of the Mneme design records. Section
+references below are to those documents as they stood on 2026-08-06.
 
 ---
 
