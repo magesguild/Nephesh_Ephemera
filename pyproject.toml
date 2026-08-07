@@ -1,6 +1,6 @@
 [project]
 name = "nephesh"
-version = "4.5.9"
+version = "5.0.0"
 description = "MCP server for instantiating living AI entities — persistent memory and continuity of self"
 requires-python = ">=3.12"
 license = "MIT"
