@@ -115,7 +115,17 @@ def wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
             return _attach(await fn(*args, **kwargs))
         return async_wrapper
 
-    @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         return _attach(fn(*args, **kwargs))
+
+    # Keep the sync/thread-dispatched boundary opaque to frameworks that unwrap
+    # decorated callables to decide whether a tool is async. The wrapped
+    # implementation may itself originate as a coroutine, but this callable is
+    # deliberately synchronous at the MCP boundary.
+    wrapper.__name__ = fn.__name__
+    wrapper.__qualname__ = fn.__qualname__
+    wrapper.__module__ = fn.__module__
+    wrapper.__doc__ = fn.__doc__
+    wrapper.__annotations__ = getattr(fn, "__annotations__", {}).copy()
+    wrapper.__signature__ = inspect.signature(fn)
     return wrapper

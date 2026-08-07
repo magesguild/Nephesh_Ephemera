@@ -33,7 +33,14 @@ class OllamaEmbeddingFunction:
                 json={"model": self.model, "prompt": text},
             )
             resp.raise_for_status()
-            return resp.json()["embedding"]
+            vector = resp.json()["embedding"]
+            if not isinstance(vector, list) or len(vector) != _VECTOR_DIM:
+                raise ValueError(
+                    f"embedding model {self.model!r} returned "
+                    f"{len(vector) if isinstance(vector, list) else 'non-vector'} dimensions; "
+                    f"Nephesh requires {_VECTOR_DIM}"
+                )
+            return vector
 
     def embed_many(self, texts: list[str]) -> list[list[float]]:
         return [self.embed(t) for t in texts]
@@ -54,6 +61,17 @@ _TABLE_SCHEMA = pa.schema([
 ])
 
 repository = PersistenceRepository(_TABLE_SCHEMA)
+
+
+def _metadata(row: dict[str, Any]) -> dict[str, Any]:
+    """Return row metadata without allowing one corrupt row to break a read."""
+    try:
+        parsed = json.loads(row.get("metadata_json", "{}") or "{}")
+    except (TypeError, json.JSONDecodeError) as exc:
+        return {"_metadata_error": f"metadata_json is not valid JSON: {exc}"}
+    if not isinstance(parsed, dict):
+        return {"_metadata_error": "metadata_json must contain a JSON object"}
+    return parsed
 
 
 def init(
@@ -142,7 +160,7 @@ async def collection_info(collection_name: str) -> CollectionInfoResult:
             sample = [
                 {
                     "id": r["id"],
-                    "metadata": json.loads(r.get("metadata_json", "{}")),
+                    "metadata": _metadata(r),
                     "document_preview": r.get("text", "")[:200],
                 }
                 for r in sample_data
@@ -163,13 +181,25 @@ async def ingest(
     metadata: list[dict[str, Any]] | None = None,
     ids: list[str] | None = None,
 ) -> IngestResult:
-    table = _ensure_table(collection_name)
-
-    if metadata and len(metadata) != len(documents):
+    if metadata is not None and len(metadata) != len(documents):
         return {
             "error": "metadata list length must match documents length",
             "ingested": 0,
         }
+    if ids is not None:
+        if len(ids) != len(documents):
+            return {
+                "error": "ids list length must match documents length",
+                "ingested": 0,
+            }
+        if any(not isinstance(identifier, str) or not identifier for identifier in ids):
+            return {"error": "ids must be non-empty strings", "ingested": 0}
+        if len(set(ids)) != len(ids):
+            return {"error": "ids must be unique", "ingested": 0}
+    if any(not isinstance(doc, str) or not doc.strip() for doc in documents):
+        return {"error": "documents must be non-empty strings", "ingested": 0}
+
+    table = _ensure_table(collection_name)
 
     all_records: list[dict[str, Any]] = []
     total_docs = 0
@@ -208,6 +238,8 @@ async def search(
     n_results: int = 10,
     filter_metadata: dict[str, Any] | None = None,
 ) -> SearchResult:
+    if n_results <= 0:
+        return {"error": "n_results must be greater than zero"}
     if not repository.collection_exists(collection_name):
         return {"error": f"Collection '{collection_name}' not found"}
 
@@ -220,7 +252,7 @@ async def search(
 
     hits = []
     for r in results:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         if filter_metadata and not matches_filter(meta, filter_metadata):
             continue
         hits.append({
@@ -250,11 +282,20 @@ async def delete_collection(collection_name: str) -> DeleteResult:
 
 
 async def delete_documents(collection_name: str, ids: list[str]) -> DeleteResult:
+    _guard_destructive(collection_name)
+    if not ids:
+        return {"error": "ids must not be empty"}
+    if any(not isinstance(identifier, str) or not identifier for identifier in ids):
+        return {"error": "ids must be non-empty strings"}
+    if len(set(ids)) != len(ids):
+        return {"error": "ids must be unique"}
     if not repository.collection_exists(collection_name):
         return {"error": f"Collection '{collection_name}' not found"}
 
     table = repository.collection(collection_name)
-    id_list = ", ".join(f"'{i}'" for i in ids)
+    # LanceDB accepts SQL predicates. Escape literal quotes rather than
+    # interpolating caller text directly into the expression.
+    id_list = ", ".join(f"'{identifier.replace(chr(39), chr(39) * 2)}'" for identifier in ids)
     repository.delete(table, f"id IN ({id_list})")
 
     return {
@@ -272,6 +313,12 @@ async def stress_test(
     n_queries: int = 10,
 ) -> StressTestResult:
     _guard_destructive(collection_name)
+    if num_documents <= 0:
+        return {"error": "num_documents must be greater than zero"}
+    if document_length <= 0:
+        return {"error": "document_length must be greater than zero"}
+    if n_queries <= 0:
+        return {"error": "n_queries must be greater than zero"}
     num_documents = min(num_documents, 10000)
     random.seed(42)
 

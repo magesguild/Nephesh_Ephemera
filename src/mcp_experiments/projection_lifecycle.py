@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import functools
+import threading
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .projection import (
     EmbeddingContract,
@@ -36,10 +38,28 @@ class Store(Protocol):
     def drop_collection(self, name: str) -> None: ...
 
 
+_LIFECYCLE_LOCK = threading.RLock()
+
+
+def _serialized(fn):
+    """Serialize registry/store mutations within one deployment process.
+
+    The installer already enforces one Nephesh process per deployment. This
+    lock closes the remaining in-process race where two MCP worker threads could
+    interleave demotion and activation records.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _LIFECYCLE_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@_serialized
 def stage(
     package_dir: str | Path,
     *,
@@ -48,6 +68,8 @@ def stage(
     store: Store,
     dimensions: int,
     model: str,
+    reembed: bool = False,
+    embedder: Callable[[str], list[float]] | None = None,
 ) -> dict[str, Any]:
     """Import a verified package into its own namespace, staged and inactive.
 
@@ -64,7 +86,14 @@ def stage(
 
     package_id = str(manifest.get("package_id", ""))
     version = str(manifest.get("version", ""))
-    EmbeddingContract.from_manifest(manifest).require_compatible(dimensions=dimensions, model=model)
+    contract = EmbeddingContract.from_manifest(manifest)
+    try:
+        contract.require_compatible(dimensions=dimensions, model=model)
+    except ProjectionError:
+        if not reembed:
+            raise
+    if reembed and embedder is None:
+        raise ProjectionError("reembedding requires the deployment embedding function")
 
     namespace = guard_projection_target(namespace_for(package_id, version))
     if store.collection_exists(namespace):
@@ -72,7 +101,18 @@ def stage(
             f"{namespace!r} already exists in the store; refusing to stage over it"
         )
 
-    rows = build_rows(package, manifest, dimensions)
+    indexed_embedding = {
+        "indexed_embedding_model": model,
+        "indexed_embedding_dimensions": dimensions,
+        "reembedded": reembed,
+    }
+    rows = build_rows(
+        package,
+        manifest,
+        dimensions,
+        embedder=embedder if reembed else None,
+        embedding_info=indexed_embedding,
+    )
     if not rows:
         raise ProjectionError(f"{package_id} {version} produced no rows to import")
 
@@ -101,12 +141,23 @@ def stage(
             embedding_dimensions=int(embedding.get("dimensions", 0)),
             embedding_dtype=str(embedding.get("dtype", "")),
             embedding_endianness=str(embedding.get("endianness", "")),
+            indexed_embedding_model=model,
+            indexed_embedding_dimensions=dimensions,
+            reembedded=reembed,
             source_path=str(package),
         ))
     except Exception:
         store.drop_collection(namespace)
         raise
-    return {"namespace": namespace, "package_id": package_id, "version": version, "rows": len(rows)}
+    return {
+        "namespace": namespace,
+        "package_id": package_id,
+        "version": version,
+        "rows": len(rows),
+        "reembedded": reembed,
+        "indexed_embedding_model": model,
+        "indexed_embedding_dimensions": dimensions,
+    }
 
 
 def _entry(registry: ProjectionRegistry, store: Store, namespace: str) -> dict[str, Any]:
@@ -136,6 +187,7 @@ def _demote_current_active(
     return None
 
 
+@_serialized
 def activate(
     namespace: str,
     *,
@@ -168,6 +220,7 @@ def activate(
     return {"active": namespace, "superseded": superseded}
 
 
+@_serialized
 def rollback(
     namespace: str,
     *,
@@ -195,6 +248,7 @@ def rollback(
     return {"active": namespace, "rolled_back_from": demoted}
 
 
+@_serialized
 def retire(
     namespace: str,
     *,

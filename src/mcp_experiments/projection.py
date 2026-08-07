@@ -12,11 +12,10 @@ collection name and apply autobiographical semantics to whatever table they are
 aimed at — so the guards here are two-directional: memory tooling is kept out of
 projections, and projections are kept out of canonical memory.
 
-Deliberately NOT implemented in this slice, and refused rather than faked:
-local re-embedding as a separate profile. The vector column is a module
-constant in a single process-wide schema with a single embedder, so two
-embedding profiles cannot coexist. A package whose embedding contract does not
-match the deployment is rejected with an explicit error.
+Local re-embedding is explicit rather than implicit. A package whose embedding
+contract does not match the deployment is rejected unless the caller opts into
+re-embedding, in which case the package's text is embedded with the deployment
+profile and the resulting projection records both source and indexed profiles.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .config import settings
 
@@ -160,13 +159,7 @@ class EmbeddingContract:
         )
 
     def require_compatible(self, *, dimensions: int, model: str) -> None:
-        """Refuse an incompatible package instead of re-embedding silently.
-
-        Re-embedding as a separate profile is the correct long-term answer and
-        is not implementable here: the vector column is a single process-wide
-        schema with one embedder, so two profiles cannot coexist. Refusing is
-        the honest slice-one behaviour.
-        """
+        """Require that packaged vectors match the deployment geometry."""
         if self.dtype != "float32":
             raise ProjectionError(f"unsupported vector dtype {self.dtype!r}; only float32 is imported")
         if self.endianness not in ("little", ""):
@@ -179,7 +172,7 @@ class EmbeddingContract:
         if self.model and model and self.model.split(":")[0] != model.split(":")[0]:
             raise ProjectionError(
                 f"package embedded with {self.model!r}, deployment uses {model!r}. "
-                "Vectors from different models are not comparable; refusing rather than mixing geometry."
+                "Vectors from different models are not comparable; use explicit re-embedding rather than mixing geometry."
             )
 
 
@@ -237,6 +230,7 @@ def projection_metadata(
     *,
     package_id: str,
     version: str,
+    embedding_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build an imported row's metadata from an allowlist.
 
@@ -256,6 +250,8 @@ def projection_metadata(
             meta[field] = record[field]
         elif field in entry:
             meta[field] = entry[field]
+    if embedding_info:
+        meta.update(embedding_info)
     leaked = FORBIDDEN_METADATA_KEYS & set(meta)
     if leaked:  # pragma: no cover - guards against a future allowlist edit
         raise ProjectionError(f"projection metadata would carry memory keys: {sorted(leaked)}")
@@ -266,18 +262,20 @@ def build_rows(
     package: Path,
     manifest: dict[str, Any],
     dimensions: int,
+    embedder: Callable[[str], list[float]] | None = None,
+    embedding_info: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble the rows to insert, one per embedded chunk."""
     package_id = str(manifest.get("package_id", ""))
     version = str(manifest.get("version", ""))
     index = read_index(package, manifest)
-    vectors = read_vectors(package, manifest, dimensions)
-    if len(index) != len(vectors):
+    vectors = None if embedder else read_vectors(package, manifest, dimensions)
+    if vectors is not None and len(index) != len(vectors):
         raise ProjectionError(f"index has {len(index)} entries for {len(vectors)} vectors")
     records = read_records(package, manifest)
 
     rows: list[dict[str, Any]] = []
-    for entry, vector in zip(index, vectors):
+    for row_number, entry in enumerate(index):
         record_id = entry.get("record_id")
         record = records.get(record_id)
         if record is None:
@@ -291,12 +289,24 @@ def build_rows(
             row_id = f"{record_id}#{chunk_index}"
         else:
             row_id = str(record_id)
+        vector = embedder(text) if embedder else vectors[row_number]
+        if len(vector) != dimensions:
+            raise ProjectionError(
+                f"embedding for {row_id!r} has {len(vector)} dimensions; "
+                f"deployment requires {dimensions}"
+            )
         rows.append({
             "id": row_id,
             "text": text,
             "vector": vector,
             "metadata_json": json.dumps(
-                projection_metadata(record, entry, package_id=package_id, version=version)
+                projection_metadata(
+                    record,
+                    entry,
+                    package_id=package_id,
+                    version=version,
+                    embedding_info=embedding_info,
+                )
             ),
         })
     return rows

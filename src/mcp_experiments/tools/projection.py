@@ -45,10 +45,16 @@ async def projection_list() -> dict[str, Any]:
     }
 
 
-async def projection_stage(package_path: str, owner: str) -> dict[str, Any]:
+async def projection_stage(
+    package_path: str,
+    owner: str,
+    reembed: bool = False,
+) -> dict[str, Any]:
     """Install a verified Lore package as a staged, inactive projection.
 
-    Staging is not activation and is not permission to resume work.
+    Staging is not activation and is not permission to resume work. When
+    ``reembed`` is true, package chunks are embedded with this deployment's
+    configured embedder and the resulting projection records that fact.
     """
     try:
         return stage(
@@ -58,6 +64,8 @@ async def projection_stage(package_path: str, owner: str) -> dict[str, Any]:
             store=repository,
             dimensions=_VECTOR_DIM,
             model=settings.embedding_model,
+            reembed=reembed,
+            embedder=_get_ef().embed if reembed else None,
         )
     except (ProjectionError, OSError, ValueError) as exc:
         return _error(exc)
@@ -66,7 +74,7 @@ async def projection_stage(package_path: str, owner: str) -> dict[str, Any]:
 async def projection_activate(namespace: str, activated_by: str) -> dict[str, Any]:
     """Make a staged projection available to retrieval.
 
-    `activated_by` is recorded and not enforced in 5.0.0.
+    `activated_by` is recorded and not enforced in 5.1.0.
     """
     try:
         return activate(namespace, registry=_registry, store=repository, activated_by=activated_by)
@@ -99,6 +107,8 @@ async def projection_search(namespace: str, query: str, n_results: int = 10) -> 
     Reading does not reinforce, unlike memory recall: a projection's rows are a
     signed package and must not drift from their digests by being read.
     """
+    if n_results <= 0:
+        return {"error": "n_results must be greater than zero", "refused": True}
     # Lifecycle state has to matter here or it is decorative. activate() is
     # documented as making a projection available to retrieval and retire() as
     # removing it; this is the only surface that reads projection rows, so if
@@ -147,7 +157,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "fn": projection_stage,
         "name": "projection_stage",
-        "description": "Install a verified Lore package as a staged, inactive knowledge projection. Staging is not activation.",
+        "description": "Install a verified Lore package as a staged, inactive knowledge projection; optionally re-embed it with the deployment profile. Staging is not activation.",
         "compliance": ComplianceLevel.NON_COMPLIANT,
     },
     {

@@ -45,7 +45,14 @@ class FakeStore:
         self.tables.pop(name, None)
 
 
-def write_package(root: Path, package_id: str, version: str, *, rows: int = 2) -> Path:
+def write_package(
+    root: Path,
+    package_id: str,
+    version: str,
+    *,
+    rows: int = 2,
+    embedding_model: str = "mxbai-embed-large:latest",
+) -> Path:
     package = root / f"{package_id}-{version}"
     package.mkdir(parents=True)
     (package / "records.jsonl").write_text(
@@ -71,7 +78,7 @@ def write_package(root: Path, package_id: str, version: str, *, rows: int = 2) -
         "records": rows,
         "publisher": {"name": "MagesGuild"},
         "embedding": {
-            "model": "mxbai-embed-large:latest",
+            "model": embedding_model,
             "dimensions": DIMS,
             "dtype": "float32",
             "endianness": "little",
@@ -125,6 +132,32 @@ class StageTests(LifecycleTestCase):
             stage(package, owner="urania", registry=self.registry, store=self.store,
                   dimensions=768, model=MODEL)
         self.assertEqual(self.store.collections(), [])
+
+    def test_an_incompatible_profile_can_be_explicitly_reembedded(self) -> None:
+        package = write_package(
+            self.root,
+            "org.magesguild.other",
+            "1.0.0",
+            embedding_model="nomic-embed-text",
+        )
+        result = stage(
+            package,
+            owner="urania",
+            registry=self.registry,
+            store=self.store,
+            dimensions=DIMS,
+            model=MODEL,
+            reembed=True,
+            embedder=lambda text: [9.0, 8.0, 7.0, 6.0],
+        )
+        row = self.store.tables[result["namespace"]][0]
+        metadata = json.loads(row["metadata_json"])
+        self.assertEqual(row["vector"], [9.0, 8.0, 7.0, 6.0])
+        self.assertTrue(metadata["reembedded"])
+        self.assertEqual(metadata["indexed_embedding_model"], MODEL)
+        entry = self.registry.resolve(result["namespace"], self.store.collections())
+        self.assertTrue(entry["reembedded"])
+        self.assertEqual(entry["embedding_model"], "nomic-embed-text")
 
     def test_staging_over_an_existing_collection_is_refused(self) -> None:
         first = self.stage_package()

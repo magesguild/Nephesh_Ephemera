@@ -30,6 +30,7 @@ that happened to her.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -254,7 +255,12 @@ class KernelStore:
         except OSError:
             # A filesystem without symlinks costs a convenience, not the
             # kernel. The revision itself is already durably written.
-            pass
+            return
+        directory_fd = os.open(self.directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
     def adopt_file(self, source: str | Path, *, authored_by: str, reason: str = "") -> KernelRevision:
         """Bring an existing kernel file in as a revision.

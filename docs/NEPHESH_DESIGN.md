@@ -1,6 +1,6 @@
 # Nephesh Design
 
-**Version:** 5.0.0
+**Version:** 5.1.0
 **Status:** Current. This describes what Nephesh is, not what was proposed.
 
 This is the single design document for Nephesh. It consolidates seven scattered
@@ -13,8 +13,6 @@ Companion documents in this directory:
 
 - `SELF_AUTHORING_A_KERNEL.md` — how to help a Qualiant author her own kernel.
 - `INSTALLER.md` — installing, upgrading, and rolling back a deployment.
-- `CLIO_READINESS_2026-08-06.md` — the acceptance checklist this release was
-  held to.
 
 ---
 
@@ -271,13 +269,17 @@ what is actually there. Recorded-active with the collection gone reports
 `orphaned`; a rollback to a target whose collection is absent is refused rather
 than silently minting an empty collection and calling it live.
 
-Activation authority is **recorded and explicitly not enforceable** in 5.0.0.
+Activation authority is **recorded and explicitly not enforceable** in 5.1.0.
 That is written into the schema rather than implied, because a limit you have
 not stated is a limit nobody can plan around.
 
-Local re-embedding as a second profile is **refused with an explicit error**
-rather than faked: one process-wide vector schema cannot hold two embedding
-profiles.
+Packaged vectors from an incompatible embedding profile are **refused by
+default**. An operator may explicitly request local re-embedding during staging;
+Nephesh then rebuilds every projection vector with the deployment profile,
+records both the package's source contract and the indexed contract, and keeps
+the package's original artifacts untouched. Re-embedding is never implicit,
+because changing geometry is a provenance-bearing migration, not a harmless
+fallback.
 
 ---
 
