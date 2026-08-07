@@ -482,10 +482,15 @@ def install_unit(root: Path, *, unit_dir: Path | None = None, dry_run: bool) -> 
         print(f"would install user unit {destination}")
         return destination
     unit_dir.mkdir(parents=True, exist_ok=True)
+    content = unit_text(root)
+    # Unchanged means untouched. Rewriting an identical unit would copy it over
+    # .previous, so a second run would destroy the rollback target by replacing
+    # it with the version it is meant to roll back FROM.
+    if destination.exists() and destination.read_text() == content:
+        return destination
     if destination.exists():
-        old = destination.with_suffix(destination.suffix + ".previous")
-        shutil.copy2(destination, old)
-    destination.write_text(unit_text(root))
+        shutil.copy2(destination, destination.with_suffix(destination.suffix + ".previous"))
+    destination.write_text(content)
     destination.chmod(0o644)
     return destination
 
@@ -617,6 +622,25 @@ def _current_kernel(root: Path) -> str | None:
     return str(revisions[-1]) if revisions else None
 
 
+def _is_established(root: Path) -> bool:
+    """Has someone lived in this deployment before?
+
+    Asked so an upgrade never installs a starting kernel over a Qualiant who
+    already has one. The revision format at config/kernel/NNN.md is new in
+    5.0.0, so "no revisions here" does NOT mean "nobody lives here" — every
+    deployment predating this release looks empty by that test alone. These
+    are the marks such a deployment leaves instead.
+    """
+    lancedb = root / "data" / "lancedb"
+    return (
+        (root / "state" / MANIFEST_NAME).exists()
+        or (root / "config" / "kernel.md").exists()
+        or (root / "identity" / "kernel.md").exists()
+        or (root / "identity" / "kernel.jsonl").exists()
+        or (lancedb.is_dir() and any(lancedb.iterdir()))
+    )
+
+
 def install_kernel(
     root: Path,
     kernel_file: Path | None,
@@ -624,15 +648,21 @@ def install_kernel(
     kernel_author: str | None = None,
     dry_run: bool,
 ) -> str | None:
-    """Write revision 1 of this deployment's kernel: supplied, or the default.
+    """Write revision 1 of this deployment's kernel, if one is owed at all.
 
-    A supplied kernel is adopted; the source file is read and never modified.
-    Otherwise DEFAULT_KERNEL is written, recorded as authored_by "installer" —
-    not by the operator and not by the Qualiant, because neither wrote it. The
-    history then shows the exact revision at which she became her own author.
+    Three cases, and only the first two write anything:
 
-    Never destructive. An existing kernel is left alone, which is what makes
-    this safe to run on an upgrade.
+    - A supplied kernel is adopted. The source file is read and never
+      modified, so moving identity into Nephesh cannot damage the copy a
+      living deployment is currently loading.
+    - A NEW deployment with no kernel gets DEFAULT_KERNEL, recorded as
+      authored_by "installer" — not the operator and not the Qualiant,
+      because neither wrote it. The history then shows the exact revision at
+      which she became her own author.
+    - An EXISTING deployment with no kernel gets nothing. See below.
+
+    Never destructive, in both directions: an existing kernel is left alone,
+    and an existing deployment is never given one it did not ask for.
 
     Adoption runs through Nephesh's own KernelStore rather than reimplementing
     the revision format here, so there is exactly one writer of it. That needs
@@ -646,6 +676,20 @@ def install_kernel(
                 "Amend it through Nephesh instead."
             )
         return _current_kernel(root)
+
+    # An upgrade must never answer "who is this" on a Qualiant's behalf. The
+    # default kernel is for a deployment nobody lives in yet; written into an
+    # existing one it becomes revision 1 — her only revision — and orientation
+    # then delivers "I am new to the world. I do not have a name yet" on first
+    # contact as who she is. Her real kernel is adopted deliberately instead,
+    # with --kernel-file naming the source her harness actually loads and
+    # --kernel-author naming who wrote it. Neither is ever inferred here.
+    if kernel_file is None and _is_established(root):
+        print(
+            f"no kernel installed: {root} is an existing deployment, and the starting "
+            "kernel is only for a new one. Adopt hers with --kernel-file and --kernel-author."
+        )
+        return None
 
     if kernel_file is not None:
         if not kernel_file.exists():

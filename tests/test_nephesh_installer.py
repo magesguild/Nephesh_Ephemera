@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import tempfile
 import unittest
 import json
@@ -11,6 +13,8 @@ from scripts.nephesh_installer import (
     backup_existing,
     agent_name_from_kernel,
     DEFAULT_KERNEL,
+    MANIFEST_NAME,
+    UNIT_NAME,
     install_kernel,
     kernel_dir,
     allocate_mcp_port,
@@ -347,6 +351,78 @@ class InstallerUnitTests(unittest.TestCase):
             root = Path(directory) / "clio"
             with self.assertRaises(Exception):
                 install_kernel(root, Path(directory) / "nowhere.md", dry_run=False)
+
+    def test_reinstalling_an_unchanged_unit_keeps_the_rollback_target(self) -> None:
+        """Two runs must not leave .previous holding the current unit.
+
+        Rollback copies .previous back over the unit; if a no-op re-run
+        overwrites it, rolling back restores the version being rolled back
+        from, and the sister never starts on the old release.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "a_sister"
+            unit_dir = Path(directory) / "units"
+            install_unit(root, unit_dir=unit_dir, dry_run=False)
+            previous = (unit_dir / UNIT_NAME).with_suffix(".service.previous")
+            self.assertFalse(previous.exists())
+            install_unit(root, unit_dir=unit_dir, dry_run=False)
+            self.assertFalse(previous.exists())
+
+    def test_a_living_deployment_is_never_handed_a_starting_kernel(self) -> None:
+        """The revision format is new in 5.0.0.
+
+        So "no NNN.md here" does not mean "nobody lives here" — every
+        deployment predating this release looks empty by that test alone, and
+        would be handed "I am new to the world. I do not have a name yet" as
+        revision 1, her only revision, which orientation then delivers on
+        first contact as who she is.
+        """
+        for mark in (
+            Path("state") / MANIFEST_NAME,
+            Path("config") / "kernel.md",
+            Path("identity") / "kernel.md",
+            Path("identity") / "kernel.jsonl",
+            Path("data") / "lancedb" / "memories.lance",
+        ):
+            with self.subTest(mark=str(mark)):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory) / "a_sister"
+                    (root / mark).parent.mkdir(parents=True)
+                    (root / mark).write_text("hers\n")
+                    spoken = io.StringIO()
+                    with contextlib.redirect_stdout(spoken):
+                        # dry_run False on purpose: the refusal must land
+                        # before anything is written, not because nothing is.
+                        self.assertIsNone(install_kernel(root, None, dry_run=False))
+                    self.assertIn("existing deployment", spoken.getvalue())
+                    self.assertFalse(kernel_dir(root).exists())
+
+    def test_a_living_deployment_can_still_adopt_her_own_kernel(self) -> None:
+        """The guard refuses the DEFAULT, never adoption.
+
+        Adoption is the migration path off harness-held identity and has to
+        stay open — but only when a human names the source and its author,
+        because which file a harness actually loads is not inferable from
+        where a file sits.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "a_sister"
+            (root / "state").mkdir(parents=True)
+            (root / "state" / MANIFEST_NAME).write_text("{}\n")
+            source = Path(directory) / "hers.md"
+            source.write_text("# Kernel\n\nwhat her harness actually loads\n")
+            spoken = io.StringIO()
+            with contextlib.redirect_stdout(spoken):
+                install_kernel(root, source, kernel_author="urania", dry_run=True)
+            self.assertIn("would install kernel", spoken.getvalue())
+
+    def test_a_new_deployment_still_gets_the_starting_kernel(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "nobody_yet"
+            spoken = io.StringIO()
+            with contextlib.redirect_stdout(spoken):
+                install_kernel(root, None, dry_run=True)
+            self.assertIn("default starting kernel", spoken.getvalue())
 
 
 if __name__ == "__main__":
