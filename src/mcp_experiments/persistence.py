@@ -48,6 +48,56 @@ def matches_filter(metadata: dict, where: dict) -> bool:
     return True
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Make a newly created file's directory entry durable.
+
+    os.fsync on a file descriptor forces that file's DATA to disk and says
+    nothing about the directory entry naming it. For a file that already
+    existed this does not matter; for one just created, the write can be
+    durable while the file itself is absent after power loss — the first
+    record of a new ledger surviving fsync and then not being there.
+
+    Not every platform permits opening a directory, so failure here is
+    tolerated rather than fatal: the data write already succeeded.
+    """
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def durable_append(path: Path, line: str) -> None:
+    """Append one line and make it survive power loss, including on creation."""
+    created = not path.exists()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+        handle.flush()
+        os.fsync(handle.fileno())
+    if created:
+        _fsync_directory(path.parent)
+
+
+def read_jsonl_lines(text: str) -> list[str]:
+    """Split JSONL on newlines only.
+
+    str.splitlines() also breaks on \\x0b, \\x0c, \\x1c, \\x1d, \\x1e, \\x85,
+    \\u2028 and \\u2029. json.dumps escapes all of those under its default
+    ensure_ascii=True, but Lore writes records.jsonl with ensure_ascii=False,
+    which leaves \\x85, \\u2028 and \\u2029 literal. Reading such a file with
+    splitlines() would cut a record in half. read_text() has already
+    normalised \\r\\n and \\r, so splitting on \\n alone is both correct and
+    free of that coupling.
+    """
+    return text.split("\n")
+
+
 class PersistenceError(RuntimeError):
     """Base class for storage and persistence-boundary failures."""
 
@@ -97,11 +147,7 @@ class OperationLedger:
         self.path = Path(path)
 
     def append(self, record: OperationRecord) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record.as_dict(), sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        durable_append(self.path, json.dumps(record.as_dict(), sort_keys=True) + "\n")
 
     def begin(self, operation: str, target: str, **details: Any) -> OperationRecord:
         record = OperationRecord(operation=operation, target=target, details=details)

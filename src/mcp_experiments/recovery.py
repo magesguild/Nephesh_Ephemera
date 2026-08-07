@@ -24,7 +24,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from .persistence import OperationState
+from .persistence import OperationState, read_jsonl_lines
 
 #: Last states that need no follow-up.
 _RESOLVED = frozenset({OperationState.COMPLETED, OperationState.FAILED})
@@ -45,7 +45,7 @@ def read_ledger(path: str | Path) -> list[dict[str, Any]]:
     if not ledger.is_file():
         return []
     records: list[dict[str, Any]] = []
-    for line in ledger.read_text(encoding="utf-8").splitlines():
+    for line in read_jsonl_lines(ledger.read_text(encoding="utf-8")):
         if not line.strip():
             continue
         try:

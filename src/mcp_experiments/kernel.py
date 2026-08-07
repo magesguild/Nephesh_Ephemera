@@ -21,11 +21,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .persistence import durable_append, read_jsonl_lines
 
 
 class KernelError(RuntimeError):
@@ -70,7 +71,7 @@ class KernelStore:
         if not self.path.is_file():
             return []
         revisions: list[KernelRevision] = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
+        for line in read_jsonl_lines(self.path.read_text(encoding="utf-8")):
             if not line.strip():
                 continue
             try:
@@ -105,11 +106,7 @@ class KernelStore:
             authored_by=authored_by,
             reason=reason,
         )
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(revision.as_dict(), sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        durable_append(self.path, json.dumps(revision.as_dict(), sort_keys=True) + "\n")
         return revision
 
     def revision(self, version: int) -> KernelRevision:

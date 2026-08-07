@@ -208,7 +208,10 @@ def read_index(package: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     path = package / artifacts.get("embedding_index", "embedding_index.jsonl")
     if not path.is_file():
         raise ProjectionError(f"missing embedding index: {path}")
-    entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    # Split on newlines only: a package written with ensure_ascii=False can
+    # carry a literal U+2028 or U+0085 inside a text field, and splitlines()
+    # would cut the record in half.
+    entries = [json.loads(line) for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
     entries.sort(key=lambda e: e.get("row", 0))
     return entries
 
