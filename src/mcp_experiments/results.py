@@ -122,11 +122,12 @@ class MemoryContextResult(TypedDict, total=False):
     context: str | None
 
 
-class MemorySampleResult(TypedDict):
+class MemorySampleResult(TypedDict, total=False):
     collection: str
     memory_count: int
     sampled: int
     sample: str
+    error: str | None
 
 
 class ProvenanceAuditResult(TypedDict):

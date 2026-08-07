@@ -26,6 +26,14 @@ class VectorInputValidationTests(unittest.TestCase):
         result = asyncio.run(vector_db.search("scratch", "query", n_results=0))
         self.assertIn("greater than zero", result["error"])
 
+    def test_memory_recall_rejects_non_positive_limit(self) -> None:
+        result = asyncio.run(memory.memory_recall("query", n_results=0))
+        self.assertIn("greater than zero", result["error"])
+
+    def test_memory_sample_rejects_non_positive_limit(self) -> None:
+        result = asyncio.run(memory.memory_sample(n=0))
+        self.assertIn("greater than zero", result["error"])
+
     def test_delete_rejects_empty_ids(self) -> None:
         result = asyncio.run(vector_db.delete_documents("scratch", []))
         self.assertIn("not be empty", result["error"])

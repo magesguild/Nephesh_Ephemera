@@ -532,6 +532,8 @@ async def memory_recall(
 ) -> MemoryRecallResult:
     """Semantic search across memories, with optional type and time filters."""
     name = _collection(collection_name)
+    if n_results <= 0:
+        return {"error": "n_results must be greater than zero", "collection": name}
 
     if not repository.collection_exists(name):
         return {
@@ -889,6 +891,14 @@ async def memory_sample(
     import random
 
     name = _collection(collection_name)
+    if n <= 0:
+        return {
+            "collection": name,
+            "memory_count": 0,
+            "sampled": 0,
+            "sample": "",
+            "error": "n must be greater than zero",
+        }
     if not repository.collection_exists(name):
         return {"collection": name, "memory_count": 0, "sampled": 0, "sample": ""}
 

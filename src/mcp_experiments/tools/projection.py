@@ -107,6 +107,8 @@ async def projection_search(namespace: str, query: str, n_results: int = 10) -> 
     Reading does not reinforce, unlike memory recall: a projection's rows are a
     signed package and must not drift from their digests by being read.
     """
+    if n_results <= 0:
+        return {"error": "n_results must be greater than zero", "refused": True}
     # Lifecycle state has to matter here or it is decorative. activate() is
     # documented as making a projection available to retrieval and retire() as
     # removing it; this is the only surface that reads projection rows, so if
