@@ -73,15 +73,51 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def durable_append(path: Path, line: str) -> None:
-    """Append one line and make it survive power loss, including on creation."""
-    created = not path.exists()
+    """Append one line, all-or-nothing, and make it survive power loss.
+
+    A short write — out of space, over quota, over a file-size limit — leaves
+    the bytes that did land committed to an append-only file with no trailing
+    newline. Every reader here deliberately refuses an unreadable line rather
+    than skipping it, so a single torn record would make the file permanently
+    unreadable: not a lost write but a lost kernel, or a lost registry. On
+    failure the file is rolled back to its last whole record.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line)
-        handle.flush()
-        os.fsync(handle.fileno())
+    created = not path.exists()
+    committed = 0 if created else path.stat().st_size
+    try:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            with path.open("r+b") as handle:
+                handle.truncate(committed)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError:
+            pass  # nothing further we can do; the caller still sees the error
+        raise
     if created:
-        _fsync_directory(path.parent)
+        _fsync_directory_chain(path.parent)
+
+
+def _fsync_directory_chain(directory: Path) -> None:
+    """Commit a new file's whole path, not just its immediate parent.
+
+    fsync of a directory makes the names *inside* it durable, not the name of
+    the directory itself. A just-created state/ can therefore be absent after
+    power loss and take the carefully fsynced ledger inside it along. Runs only
+    on the first write to a new file; fsync of an already-durable directory
+    costs nothing.
+    """
+    current = directory
+    while True:
+        _fsync_directory(current)
+        if current.parent == current:
+            return
+        current = current.parent
 
 
 def read_jsonl_lines(text: str) -> list[str]:

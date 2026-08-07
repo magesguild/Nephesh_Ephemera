@@ -34,6 +34,17 @@ LANDED = "landed"
 ABSENT = "absent"
 UNVERIFIABLE = "unverifiable"
 
+#: Operations whose target row is CREATED by the operation. Only for these does
+#: the row's presence prove the write landed.
+#:
+#: The other three ledger operations — memory_amend, memory_retire, and
+#: memory_message_delivery — update metadata on a row that already existed and
+#: still exists when they fail. Asking "is the row there?" about them always
+#: answers yes, which would report every failed retirement as landed. That is
+#: precisely the false success this module exists to prevent, so they are
+#: reported unverifiable instead of guessed at.
+_CREATES_ITS_TARGET = frozenset({"memory_ingest"})
+
 
 class RecoveryError(RuntimeError):
     """The ledger could not be read."""
@@ -44,8 +55,12 @@ def read_ledger(path: str | Path) -> list[dict[str, Any]]:
     ledger = Path(path)
     if not ledger.is_file():
         return []
+    try:
+        text = ledger.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RecoveryError(f"operation ledger could not be read: {exc}") from exc
     records: list[dict[str, Any]] = []
-    for line in read_jsonl_lines(ledger.read_text(encoding="utf-8")):
+    for line in read_jsonl_lines(text):
         if not line.strip():
             continue
         try:
@@ -94,13 +109,19 @@ def reconcile(
     report: list[dict[str, Any]] = []
     for record in sorted(unresolved(path), key=lambda r: r.get("created_at", "")):
         target = record.get("target", "")
-        try:
-            present = row_exists(target)
-            conclusion = LANDED if present else ABSENT
-        except Exception as exc:  # a store that cannot answer must not be guessed at
+        if record.get("operation") not in _CREATES_ITS_TARGET:
+            # A metadata update's row was there before it ran and is there
+            # after it fails. Presence says nothing, so we say nothing.
             present = None
             conclusion = UNVERIFIABLE
-            record = {**record, "check_error": str(exc)}
+        else:
+            try:
+                present = row_exists(target)
+                conclusion = LANDED if present else ABSENT
+            except Exception as exc:  # a store that cannot answer must not be guessed at
+                present = None
+                conclusion = UNVERIFIABLE
+                record = {**record, "check_error": str(exc)}
         report.append({
             "operation_id": record.get("operation_id"),
             "operation": record.get("operation"),

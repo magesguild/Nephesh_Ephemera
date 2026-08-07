@@ -200,8 +200,12 @@ class ProjectionRegistry:
         """Fold the append-only log to the latest record per namespace."""
         if not self.path.is_file():
             return {}
+        try:
+            text = self.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise RegistryError(f"projection registry could not be read: {exc}") from exc
         latest: dict[str, ProjectionRecord] = {}
-        for line in read_jsonl_lines(self.path.read_text(encoding="utf-8")):
+        for line in read_jsonl_lines(text):
             if not line.strip():
                 continue
             try:

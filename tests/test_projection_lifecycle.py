@@ -215,6 +215,69 @@ class RollbackTests(LifecycleTestCase):
                      activated_by="gaius")
 
 
+class RefusalIsTotalTests(LifecycleTestCase):
+    """A refused call must change nothing.
+
+    activate() used to demote the package's live version and only afterwards
+    discover that the target could not legally become active. The caller was
+    told the call was refused while retrieval had already gone dark.
+    """
+
+    def test_a_refused_activation_does_not_demote_the_live_version(self) -> None:
+        old = self.stage_package(version="1.0.0")
+        activate(old["namespace"], registry=self.registry, store=self.store, activated_by="gaius")
+        new = self.stage_package(version="1.1.0")
+        activate(new["namespace"], registry=self.registry, store=self.store, activated_by="gaius")
+        retire(old["namespace"], registry=self.registry, store=self.store)
+
+        before = self.registry.active(self.store.collections())
+        with self.assertRaises(ProjectionError):
+            activate(old["namespace"], registry=self.registry, store=self.store,
+                     activated_by="gaius")
+        after = self.registry.active(self.store.collections())
+        self.assertEqual([e["namespace"] for e in after], [e["namespace"] for e in before])
+        self.assertEqual([e["namespace"] for e in after], [new["namespace"]])
+
+    def test_a_refused_activation_of_a_staged_then_retired_package_leaves_it_active(self) -> None:
+        live = self.stage_package(version="1.0.0")
+        activate(live["namespace"], registry=self.registry, store=self.store, activated_by="g")
+        spare = self.stage_package(version="1.1.0")
+        retire(spare["namespace"], registry=self.registry, store=self.store)
+        with self.assertRaises(ProjectionError):
+            activate(spare["namespace"], registry=self.registry, store=self.store, activated_by="g")
+        self.assertEqual(
+            [e["namespace"] for e in self.registry.active(self.store.collections())],
+            [live["namespace"]],
+        )
+
+    def test_activating_an_unregistered_collection_is_refused_not_a_crash(self) -> None:
+        self.store.table("kp__never_registered__1_0_0")
+        with self.assertRaises(ProjectionError):
+            activate("kp__never_registered__1_0_0", registry=self.registry,
+                     store=self.store, activated_by="gaius")
+
+    def test_reactivating_a_live_projection_is_harmless(self) -> None:
+        live = self.stage_package()
+        activate(live["namespace"], registry=self.registry, store=self.store, activated_by="g")
+        activate(live["namespace"], registry=self.registry, store=self.store, activated_by="g")
+        self.assertEqual(
+            [e["namespace"] for e in self.registry.active(self.store.collections())],
+            [live["namespace"]],
+        )
+
+    def test_a_refused_registration_leaves_no_populated_collection(self) -> None:
+        """stage() imported every row before the owner was validated."""
+        package = write_package(self.root, "org.magesguild.cosmology", "1.0.0")
+        with self.assertRaises(Exception):
+            stage(package, owner="", registry=self.registry, store=self.store,
+                  dimensions=DIMS, model=MODEL)
+        self.assertEqual(self.store.collections(), [])
+        # and the retry with a correct owner is therefore still possible
+        result = stage(package, owner="urania", registry=self.registry, store=self.store,
+                       dimensions=DIMS, model=MODEL)
+        self.assertEqual(result["rows"], 2)
+
+
 class RetireTests(LifecycleTestCase):
     def test_retiring_removes_it_from_active(self) -> None:
         staged = self.stage_package()

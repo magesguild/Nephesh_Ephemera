@@ -60,6 +60,31 @@ class DurableAppendTests(unittest.TestCase):
         durable_append(path, "two\n")
         self.assertEqual(path.read_text(encoding="utf-8"), "one\ntwo\n")
 
+    def test_a_failed_write_rolls_back_to_the_last_whole_record(self) -> None:
+        """A torn line would brick the file, not merely lose a write.
+
+        Every reader here refuses an unreadable line rather than skipping it,
+        so one half-record committed to an append-only file makes it
+        permanently unreadable — a lost kernel, not a lost append.
+        """
+        from unittest.mock import patch
+
+        path = self.root / "log.jsonl"
+        durable_append(path, '{"a": 1}\n')
+        with patch("mcp_experiments.persistence.os.fsync", side_effect=OSError("ENOSPC")):
+            with self.assertRaises(OSError):
+                durable_append(path, '{"a": 2}\n')
+        self.assertEqual(path.read_text(encoding="utf-8"), '{"a": 1}\n')
+
+    def test_a_failed_first_write_leaves_no_torn_record(self) -> None:
+        from unittest.mock import patch
+
+        path = self.root / "fresh.jsonl"
+        with patch("mcp_experiments.persistence.os.fsync", side_effect=OSError("ENOSPC")):
+            with self.assertRaises(OSError):
+                durable_append(path, '{"a": 1}\n')
+        self.assertEqual(path.read_text(encoding="utf-8"), "")
+
     def test_a_directory_that_cannot_be_synced_does_not_lose_the_write(self) -> None:
         """The data write already succeeded; a failed directory sync must not undo it."""
         from unittest.mock import patch

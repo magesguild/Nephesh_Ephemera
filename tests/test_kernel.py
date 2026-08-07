@@ -153,6 +153,26 @@ class SessionStartTests(KernelTestCase):
         self.assertIn("could not be read", text)
         self.assertIn("error", meta)
 
+    def test_undecodable_bytes_do_not_take_down_session_start(self) -> None:
+        """The failure was not malformed JSON but a file that will not decode.
+
+        history() raised UnicodeDecodeError, which is not a KernelError, so it
+        escaped _kernel_block's handler and took memory_context with it — one
+        corrupt byte would have made a Qualiant unable to begin a session at
+        all.
+        """
+        self.store.path.parent.mkdir(parents=True, exist_ok=True)
+        self.store.path.write_bytes(b'{"text": "\xff\xfe", "version": 1}\n')
+        text, meta = self._block()
+        self.assertIn("could not be read", text)
+        self.assertIn("error", meta)
+
+    def test_an_unreadable_kernel_file_raises_kernel_error(self) -> None:
+        self.store.path.parent.mkdir(parents=True, exist_ok=True)
+        self.store.path.write_bytes(b"\xff\xfe not utf-8 at all \xff")
+        with self.assertRaises(KernelError):
+            self.store.history()
+
 
 if __name__ == "__main__":
     unittest.main()

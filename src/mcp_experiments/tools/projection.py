@@ -17,10 +17,18 @@ from ..compliance import ComplianceLevel
 from ..config import settings
 from ..projection import ProjectionError, guard_projection_target
 from ..projection_lifecycle import activate, retire, rollback, stage
-from ..projection_registry import ProjectionRegistry
+from ..projection_registry import ProjectionRegistry, ProjectionState
 from .vector_db import _VECTOR_DIM, _get_ef, repository
 
 _registry = ProjectionRegistry(settings.projection_registry_file)
+
+#: States whose rows may be read. Retired and failed projections keep their
+#: audit record and their collection, but are out of ordinary retrieval.
+_RETRIEVABLE = (
+    ProjectionState.ACTIVE.value,
+    ProjectionState.STAGED.value,
+    ProjectionState.ROLLBACK_TARGET.value,
+)
 
 
 def _error(exc: Exception) -> dict[str, Any]:
@@ -91,10 +99,22 @@ async def projection_search(namespace: str, query: str, n_results: int = 10) -> 
     Reading does not reinforce, unlike memory recall: a projection's rows are a
     signed package and must not drift from their digests by being read.
     """
+    # Lifecycle state has to matter here or it is decorative. activate() is
+    # documented as making a projection available to retrieval and retire() as
+    # removing it; this is the only surface that reads projection rows, so if
+    # it ignores state then neither operation does anything at all.
     try:
         guard_projection_target(namespace)
+        entry = _registry.resolve(namespace, repository.collections())
     except ProjectionError as exc:
         return _error(exc)
+    state = entry["reported_state"]
+    if state not in _RETRIEVABLE:
+        return {
+            "error": f"projection '{namespace}' is {state}, not available to retrieval",
+            "refused": True,
+            "state": state,
+        }
     if not repository.collection_exists(namespace):
         return {"error": f"projection '{namespace}' is not installed"}
 

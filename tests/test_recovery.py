@@ -105,6 +105,49 @@ class ReconcileTests(RecoveryTestCase):
         self.assertEqual([e["target"] for e in report], ["open"])
 
 
+class PresenceProvesNothingTests(RecoveryTestCase):
+    """Only a creating operation can be judged by whether its row is there.
+
+    memory_amend, memory_retire and memory_message_delivery update metadata on
+    a row that existed before them and still exists when they fail. Asking "is
+    the row there?" always answers yes, so reporting landed would call every
+    failed retirement a success — the exact false success this module exists
+    to prevent.
+    """
+
+    def test_an_uncertain_retirement_is_unverifiable_not_landed(self) -> None:
+        self.op("memory_retire", "m1", OperationState.UNCERTAIN)
+        report = reconcile(self.path, lambda _t: True)
+        self.assertEqual(report[0]["conclusion"], UNVERIFIABLE)
+
+    def test_an_uncertain_amendment_is_unverifiable_not_landed(self) -> None:
+        self.op("memory_amend", "m1", OperationState.UNCERTAIN)
+        self.assertEqual(reconcile(self.path, lambda _t: True)[0]["conclusion"], UNVERIFIABLE)
+
+    def test_an_uncertain_message_delivery_is_unverifiable_not_landed(self) -> None:
+        self.op("memory_message_delivery", "m1", OperationState.UNCERTAIN)
+        self.assertEqual(reconcile(self.path, lambda _t: True)[0]["conclusion"], UNVERIFIABLE)
+
+    def test_an_ingest_is_still_judged_by_presence(self) -> None:
+        self.op("memory_ingest", "m1", OperationState.UNCERTAIN)
+        self.assertEqual(reconcile(self.path, lambda _t: True)[0]["conclusion"], LANDED)
+        self.op("memory_ingest", "m2", OperationState.UNCERTAIN)
+        absent = [e for e in reconcile(self.path, lambda t: t == "m1") if e["target"] == "m2"]
+        self.assertEqual(absent[0]["conclusion"], ABSENT)
+
+    def test_an_unverifiable_report_is_not_clean(self) -> None:
+        self.op("memory_retire", "m1", OperationState.UNCERTAIN)
+        self.assertFalse(summarize(reconcile(self.path, lambda _t: True))["clean"])
+
+
+class UnreadableLedgerTests(RecoveryTestCase):
+    def test_an_unreadable_ledger_raises_recovery_error(self) -> None:
+        self.op("memory_ingest", "m1")
+        self.path.write_bytes(b"\xff\xfe not utf-8 \xff")
+        with self.assertRaises(RecoveryError):
+            unresolved(self.path)
+
+
 class SummaryTests(RecoveryTestCase):
     def test_an_empty_ledger_summarizes_clean(self) -> None:
         self.assertTrue(summarize(reconcile(self.path, lambda _t: True))["clean"])

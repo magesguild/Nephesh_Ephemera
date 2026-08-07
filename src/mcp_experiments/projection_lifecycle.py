@@ -76,31 +76,36 @@ def stage(
     if not rows:
         raise ProjectionError(f"{package_id} {version} produced no rows to import")
 
+    embedding = manifest.get("embedding") or {}
+    publisher = manifest.get("publisher") or {}
     table = store.table(namespace)
+    # Registration is inside the cleanup, not after it. registry.record() is
+    # where the owner is validated, so a stage() with a bad owner would
+    # otherwise import every row, refuse, and leave a populated collection no
+    # registry knows about — which then blocks the retry, because staging over
+    # an existing collection is refused. Any failure here drops what this call
+    # created.
     try:
         store.add(table, rows)
+        registry.record(ProjectionRecord(
+            package_id=package_id,
+            version=version,
+            namespace=namespace,
+            state=ProjectionState.STAGED,
+            owner=owner,
+            manifest_sha256=_sha256(manifest_path),
+            publisher=str(publisher.get("name", "")),
+            records=int(manifest.get("records", 0)),
+            chunks=len(rows),
+            embedding_model=str(embedding.get("model", "")),
+            embedding_dimensions=int(embedding.get("dimensions", 0)),
+            embedding_dtype=str(embedding.get("dtype", "")),
+            embedding_endianness=str(embedding.get("endianness", "")),
+            source_path=str(package),
+        ))
     except Exception:
         store.drop_collection(namespace)
         raise
-
-    embedding = manifest.get("embedding") or {}
-    publisher = manifest.get("publisher") or {}
-    registry.record(ProjectionRecord(
-        package_id=package_id,
-        version=version,
-        namespace=namespace,
-        state=ProjectionState.STAGED,
-        owner=owner,
-        manifest_sha256=_sha256(manifest_path),
-        publisher=str(publisher.get("name", "")),
-        records=int(manifest.get("records", 0)),
-        chunks=len(rows),
-        embedding_model=str(embedding.get("model", "")),
-        embedding_dimensions=int(embedding.get("dimensions", 0)),
-        embedding_dtype=str(embedding.get("dtype", "")),
-        embedding_endianness=str(embedding.get("endianness", "")),
-        source_path=str(package),
-    ))
     return {"namespace": namespace, "package_id": package_id, "version": version, "rows": len(rows)}
 
 
@@ -145,6 +150,17 @@ def activate(
     registry module docstring.
     """
     entry = _entry(registry, store, namespace)
+    # Check the target BEFORE demoting anything. Demoting first and discovering
+    # afterwards that the target cannot legally become active leaves the
+    # package with nothing active at all, while the caller is told the call was
+    # refused — a refusal that silently took retrieval down. rollback() already
+    # gets this ordering right. ACTIVE stays allowed so re-activating a live
+    # projection is a no-op rather than an error; an unregistered but present
+    # collection has recorded_state None and is refused here.
+    if entry["recorded_state"] not in ("staged", "rollback_target", "active"):
+        raise ProjectionError(
+            f"{namespace!r} is {entry['recorded_state']}, not activatable"
+        )
     superseded = _demote_current_active(
         registry, store, entry["package_id"], reason=f"superseded by {namespace}"
     )

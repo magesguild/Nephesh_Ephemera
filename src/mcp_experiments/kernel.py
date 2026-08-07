@@ -70,8 +70,16 @@ class KernelStore:
     def history(self) -> list[KernelRevision]:
         if not self.path.is_file():
             return []
+        # An unreadable kernel file — bad permissions, a truncated multi-byte
+        # sequence, a device error — must surface as KernelError like any other
+        # kernel failure. Letting OSError or UnicodeDecodeError escape takes
+        # down every caller, and one of those callers is session start.
+        try:
+            text = self.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise KernelError(f"kernel file could not be read: {exc}") from exc
         revisions: list[KernelRevision] = []
-        for line in read_jsonl_lines(self.path.read_text(encoding="utf-8")):
+        for line in read_jsonl_lines(text):
             if not line.strip():
                 continue
             try:
