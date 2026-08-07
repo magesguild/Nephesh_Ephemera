@@ -92,6 +92,9 @@ class ProjectionRecord:
     embedding_dimensions: int = 0
     embedding_dtype: str = ""
     embedding_endianness: str = ""
+    indexed_embedding_model: str = ""
+    indexed_embedding_dimensions: int = 0
+    reembedded: bool = False
     source_path: str = ""
     # Recorded, NOT enforced in 5.0.0. See the module docstring.
     activated_by: str = ""

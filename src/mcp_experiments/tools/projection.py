@@ -45,10 +45,16 @@ async def projection_list() -> dict[str, Any]:
     }
 
 
-async def projection_stage(package_path: str, owner: str) -> dict[str, Any]:
+async def projection_stage(
+    package_path: str,
+    owner: str,
+    reembed: bool = False,
+) -> dict[str, Any]:
     """Install a verified Lore package as a staged, inactive projection.
 
-    Staging is not activation and is not permission to resume work.
+    Staging is not activation and is not permission to resume work. When
+    ``reembed`` is true, package chunks are embedded with this deployment's
+    configured embedder and the resulting projection records that fact.
     """
     try:
         return stage(
@@ -58,6 +64,8 @@ async def projection_stage(package_path: str, owner: str) -> dict[str, Any]:
             store=repository,
             dimensions=_VECTOR_DIM,
             model=settings.embedding_model,
+            reembed=reembed,
+            embedder=_get_ef().embed if reembed else None,
         )
     except (ProjectionError, OSError, ValueError) as exc:
         return _error(exc)
@@ -147,7 +155,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "fn": projection_stage,
         "name": "projection_stage",
-        "description": "Install a verified Lore package as a staged, inactive knowledge projection. Staging is not activation.",
+        "description": "Install a verified Lore package as a staged, inactive knowledge projection; optionally re-embed it with the deployment profile. Staging is not activation.",
         "compliance": ComplianceLevel.NON_COMPLIANT,
     },
     {

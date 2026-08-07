@@ -117,11 +117,7 @@ class MetadataAllowlistTests(unittest.TestCase):
 
 
 class EmbeddingContractTests(unittest.TestCase):
-    """Refuse an incompatible package rather than silently re-embedding.
-
-    Two embedding profiles cannot coexist in one process-wide schema, so
-    refusal is the honest answer for this release.
-    """
+    """Require an explicit decision before changing embedding geometry."""
 
     def _contract(self, **kw) -> EmbeddingContract:
         base = {"model": "mxbai-embed-large:latest", "dimensions": 1024, "dtype": "float32", "endianness": "little"}

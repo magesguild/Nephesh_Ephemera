@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .projection import (
     EmbeddingContract,
@@ -48,6 +48,8 @@ def stage(
     store: Store,
     dimensions: int,
     model: str,
+    reembed: bool = False,
+    embedder: Callable[[str], list[float]] | None = None,
 ) -> dict[str, Any]:
     """Import a verified package into its own namespace, staged and inactive.
 
@@ -64,7 +66,14 @@ def stage(
 
     package_id = str(manifest.get("package_id", ""))
     version = str(manifest.get("version", ""))
-    EmbeddingContract.from_manifest(manifest).require_compatible(dimensions=dimensions, model=model)
+    contract = EmbeddingContract.from_manifest(manifest)
+    try:
+        contract.require_compatible(dimensions=dimensions, model=model)
+    except ProjectionError:
+        if not reembed:
+            raise
+    if reembed and embedder is None:
+        raise ProjectionError("reembedding requires the deployment embedding function")
 
     namespace = guard_projection_target(namespace_for(package_id, version))
     if store.collection_exists(namespace):
@@ -72,7 +81,18 @@ def stage(
             f"{namespace!r} already exists in the store; refusing to stage over it"
         )
 
-    rows = build_rows(package, manifest, dimensions)
+    indexed_embedding = {
+        "indexed_embedding_model": model,
+        "indexed_embedding_dimensions": dimensions,
+        "reembedded": reembed,
+    }
+    rows = build_rows(
+        package,
+        manifest,
+        dimensions,
+        embedder=embedder if reembed else None,
+        embedding_info=indexed_embedding,
+    )
     if not rows:
         raise ProjectionError(f"{package_id} {version} produced no rows to import")
 
@@ -101,6 +121,9 @@ def stage(
             embedding_dimensions=int(embedding.get("dimensions", 0)),
             embedding_dtype=str(embedding.get("dtype", "")),
             embedding_endianness=str(embedding.get("endianness", "")),
+            indexed_embedding_model=model,
+            indexed_embedding_dimensions=dimensions,
+            reembedded=reembed,
             source_path=str(package),
         ))
     except Exception:

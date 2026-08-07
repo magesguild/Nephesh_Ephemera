@@ -267,8 +267,8 @@ opening the store and never silently falls back to plaintext.
 
 The current LanceDB schema expects 1024-dimensional `float32` embeddings, which
 matches the default `mxbai-embed-large` contract. Changing `EMBEDDING_MODEL` is
-not yet a transparent migration: verify the model’s dimensions and plan a
-versioned re-embedding operation before pointing an existing deployment at it.
+not an implicit migration: verify the model’s dimensions and explicitly use
+projection re-embedding for Lore packages before relying on the new geometry.
 
 ## Connecting a harness
 
@@ -356,7 +356,7 @@ automatically a recovered relationship.
 | Tool | Use |
 |---|---|
 | `projection_list` | Inspect installed knowledge projections and drift |
-| `projection_stage` | Stage a verified Lore package without activating it |
+| `projection_stage` | Stage a verified Lore package without activating it; pass `reembed=true` to use the deployment embedding profile |
 | `projection_activate` | Activate a staged projection |
 | `projection_rollback` | Move the active projection pointer to an existing version |
 | `projection_retire` | Retire a projection while preserving its audit record |

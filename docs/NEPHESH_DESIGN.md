@@ -275,9 +275,13 @@ Activation authority is **recorded and explicitly not enforceable** in 5.0.0.
 That is written into the schema rather than implied, because a limit you have
 not stated is a limit nobody can plan around.
 
-Local re-embedding as a second profile is **refused with an explicit error**
-rather than faked: one process-wide vector schema cannot hold two embedding
-profiles.
+Packaged vectors from an incompatible embedding profile are **refused by
+default**. An operator may explicitly request local re-embedding during staging;
+Nephesh then rebuilds every projection vector with the deployment profile,
+records both the package's source contract and the indexed contract, and keeps
+the package's original artifacts untouched. Re-embedding is never implicit,
+because changing geometry is a provenance-bearing migration, not a harmless
+fallback.
 
 ---
 
