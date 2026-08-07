@@ -327,6 +327,19 @@ class InstallerUnitTests(unittest.TestCase):
             source = Path(directory) / "other.md"
             source.write_text("someone else's kernel\n")
             with self.assertRaises(Exception):
+                install_kernel(root, source, kernel_author="urania", dry_run=False)
+
+    def test_adopting_a_kernel_without_naming_its_author_is_refused(self) -> None:
+        """The installing user is not necessarily the author.
+
+        Running the installer as the Qualiant would otherwise credit her with
+        writing a document she has never seen.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "someone"
+            source = Path(directory) / "kernel.md"
+            source.write_text("# Kernel\n\nwritten by someone else\n")
+            with self.assertRaises(Exception):
                 install_kernel(root, source, dry_run=False)
 
     def test_adopting_a_missing_kernel_file_is_refused(self) -> None:

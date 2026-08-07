@@ -51,8 +51,16 @@ class KernelError(RuntimeError):
     """A kernel operation was refused."""
 
 
-def _digest(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def _digest(text: str, *, authored_by: str = "", reason: str = "", recorded_at: str = "") -> str:
+    """Cover the provenance as well as the prose.
+
+    A digest over the text alone leaves `authored_by` editable with nothing to
+    detect it — someone could rewrite who wrote a kernel and the integrity
+    check would stay quiet. Attribution is exactly the claim a reader most
+    needs to trust, so it is inside the digest.
+    """
+    payload = "\n".join((authored_by, reason, recorded_at, text))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -70,7 +78,15 @@ class KernelRevision:
 
     def __post_init__(self) -> None:
         if not self.sha256:
-            self.sha256 = _digest(self.text)
+            self.sha256 = self.compute_digest()
+
+    def compute_digest(self) -> str:
+        return _digest(
+            self.text,
+            authored_by=self.authored_by,
+            reason=self.reason,
+            recorded_at=self.recorded_at,
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -141,15 +157,17 @@ def _parse(path: Path) -> KernelRevision:
         version=fields["version"],
         authored_by=fields["authored_by"],
         reason=fields.get("reason", ""),
-        sha256=fields.get("sha256", "") or _digest(text),
+        sha256=fields.get("sha256", ""),
         recorded_at=fields.get("recorded_at", ""),
         supersedes=fields.get("supersedes"),
         path=str(path),
     )
-    if revision.sha256 != _digest(text):
+    if not revision.sha256:
+        raise KernelError(f"kernel revision {path.name} records no digest")
+    if revision.sha256 != revision.compute_digest():
         raise KernelError(
             f"kernel revision {path.name} does not match its recorded digest; "
-            "it has been edited outside Nephesh"
+            "its text or its attribution has been edited outside Nephesh"
         )
     return revision
 
@@ -193,7 +211,7 @@ class KernelStore:
             raise KernelError("a kernel revision must record who authored it")
 
         previous = self.current()
-        if previous is not None and previous.sha256 == _digest(text):
+        if previous is not None and previous.text == text:
             raise KernelError("this revision is identical to the current kernel")
 
         revision = KernelRevision(
@@ -209,7 +227,31 @@ class KernelStore:
             durable_write_new(path, revision.render())
         except FileExistsError as exc:  # pragma: no cover - concurrent amend
             raise KernelError(f"kernel revision {path.name} already exists") from exc
+        self._point_current_at(path)
         return revision
+
+    def current_path(self) -> Path:
+        """A stable path that always resolves to the newest revision.
+
+        Harnesses that load instruction files by path need somewhere fixed to
+        point. OpenCode's documented `instructions` option takes paths and
+        globs; a glob would load every revision she has ever written, and a
+        pinned revision number goes stale the moment she amends. A symlink is
+        neither: it is one name that always means "her kernel now", and it
+        cannot drift from the revision because it *is* the revision.
+        """
+        return self.directory / "current.md"
+
+    def _point_current_at(self, path: Path) -> None:
+        link = self.current_path()
+        try:
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(path.name)
+        except OSError:
+            # A filesystem without symlinks costs a convenience, not the
+            # kernel. The revision itself is already durably written.
+            pass
 
     def adopt_file(self, source: str | Path, *, authored_by: str, reason: str = "") -> KernelRevision:
         """Bring an existing kernel file in as a revision.

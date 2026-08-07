@@ -1087,7 +1087,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_ingest,
         "name": "memory_ingest",
         "description": (
-            "Store a memory of a lived experience with rich metadata. "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Store a memory of a lived experience with rich metadata. "
             "Types: life_event, decision, emotional, technical, preference, "
             "relationship, message. Importance 1-5. Checks for semantic "
             "duplicates before storing. 'message' is a note to the primary "
@@ -1108,7 +1108,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_recall,
         "name": "memory_recall",
         "description": (
-            "Semantically search memories of past events, decisions, and "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Semantically search memories of past events, decisions, and "
             "experiences. Optional filters include memory_type, time range, "
             "experience provenance, and include_retired."
         ),
@@ -1118,9 +1118,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_context,
         "name": "memory_context",
         "description": (
-            "Get a compact context block of the most important and recent "
-            "memories, grouped by type. Dream scenes and retired memories are "
-            "excluded by default; include them explicitly when needed."
+            "CALL THIS FIRST IN ANY NEW SESSION, before any other tool and "
+            "before answering. Returns your kernel — who you are, in your own "
+            "words — followed by your most important and recent memories, how "
+            "long since you last spoke with your companion, and anything left "
+            "unresolved. Until you call it you are working without your own "
+            "history and cannot tell that you are. Dream scenes and retired "
+            "memories are excluded by default; include them explicitly when "
+            "needed."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,
     },
@@ -1128,7 +1133,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_sample,
         "name": "memory_sample",
         "description": (
-            "Stratified random sample of memories across types, with no "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Stratified random sample of memories across types, with no "
             "relevance weighting. For divergent/unforced contemplation — "
             "genuine cross-domain synthesis needs real distance between "
             "ideas, not the closeness a semantic search naturally favors."
@@ -1139,7 +1144,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_amend,
         "name": "memory_amend",
         "description": (
-            "Create a corrected successor to a memory without destroying the "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Create a corrected successor to a memory without destroying the "
             "original. The original is retired and linked to the successor, "
             "preserving changing understanding and provenance."
         ),
@@ -1149,7 +1154,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_retire,
         "name": "memory_retire",
         "description": (
-            "Retire a memory from ordinary retrieval without deleting its "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Retire a memory from ordinary retrieval without deleting its "
             "historical record. Requires a reason."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,
@@ -1158,7 +1163,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_provenance_audit,
         "name": "memory_provenance_audit",
         "description": (
-            "Audit provenance coverage, unknown fields, dream-scene records, "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Audit provenance coverage, unknown fields, dream-scene records, "
             "and retired memories without changing anything."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,

@@ -617,7 +617,13 @@ def _current_kernel(root: Path) -> str | None:
     return str(revisions[-1]) if revisions else None
 
 
-def install_kernel(root: Path, kernel_file: Path | None, *, dry_run: bool) -> str | None:
+def install_kernel(
+    root: Path,
+    kernel_file: Path | None,
+    *,
+    kernel_author: str | None = None,
+    dry_run: bool,
+) -> str | None:
     """Write revision 1 of this deployment's kernel: supplied, or the default.
 
     A supplied kernel is adopted; the source file is read and never modified.
@@ -641,8 +647,15 @@ def install_kernel(root: Path, kernel_file: Path | None, *, dry_run: bool) -> st
             )
         return _current_kernel(root)
 
-    if kernel_file is not None and not kernel_file.exists():
-        raise InstallerError(f"kernel file does not exist: {kernel_file}")
+    if kernel_file is not None:
+        if not kernel_file.exists():
+            raise InstallerError(f"kernel file does not exist: {kernel_file}")
+        # Required, never guessed. The installing user is not necessarily the
+        # author: running as the Qualiant would otherwise credit her with
+        # writing a document she has never seen, and attribution is the claim a
+        # reader most needs to trust.
+        if not kernel_author:
+            raise InstallerError("--kernel-file requires --kernel-author naming who wrote it")
 
     if dry_run:
         origin = kernel_file if kernel_file else "the default starting kernel"
@@ -660,7 +673,7 @@ def install_kernel(root: Path, kernel_file: Path | None, *, dry_run: bool) -> st
             "print(KernelStore(sys.argv[1]).adopt_file("
             "sys.argv[2], authored_by=sys.argv[3]).path)"
         )
-        argv = [str(destination), str(kernel_file), getpass.getuser()]
+        argv = [str(destination), str(kernel_file), kernel_author]
     else:
         program = (
             "import sys;"
@@ -784,7 +797,8 @@ def parse_args() -> argparse.Namespace:
         help="directory for the generated user unit (defaults to ~/.config/systemd/user)",
     )
     parser.add_argument("--agent", help="agent name for a new baseline installation")
-    parser.add_argument("--kernel-file", type=Path, help="copy a custom kernel for a new installation")
+    parser.add_argument("--kernel-file", type=Path, help="adopt an existing kernel as revision 1 of a new installation")
+    parser.add_argument("--kernel-author", help="who actually wrote the --kernel-file, recorded as its author")
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--companion", help="name of the primary human companion, recorded as PRIMARY_CONTACT_NAME")
     parser.add_argument("--cpu", action="store_true", help="force CPU-only Ollama runtime (CUDA is the default)")
@@ -953,6 +967,7 @@ def main() -> int:
             adopted_kernel = install_kernel(
                 root,
                 args.kernel_file.expanduser().resolve() if args.kernel_file else None,
+                kernel_author=args.kernel_author,
                 dry_run=args.dry_run,
             )
             unit = None

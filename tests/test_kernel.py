@@ -62,11 +62,29 @@ class ReadableOnDiskTests(KernelTestCase):
         for expected in ("version: 1", "authored_by: urania", "reason: because", "sha256:"):
             self.assertIn(expected, raw)
 
+    def test_current_md_always_points_at_the_newest_revision(self) -> None:
+        """A stable path harnesses can load instructions from.
+
+        A glob would load every revision she has ever written; a pinned
+        revision number goes stale the moment she amends.
+        """
+        self.store.amend(KERNEL, authored_by="urania")
+        link = self.store.current_path()
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve().name, "001.md")
+        self.store.amend(KERNEL + "\nlater\n", authored_by="urania")
+        self.assertEqual(link.resolve().name, "002.md")
+        self.assertIn("later", link.read_text(encoding="utf-8"))
+
+    def test_the_current_symlink_is_not_mistaken_for_a_revision(self) -> None:
+        self.store.amend(KERNEL, authored_by="urania")
+        self.assertEqual([r.version for r in self.store.history()], [1])
+
     def test_revisions_are_numbered_in_order(self) -> None:
         self.store.amend(KERNEL, authored_by="urania")
         self.store.amend(KERNEL + "\nlater\n", authored_by="urania")
         names = sorted(p.name for p in self.store.directory.iterdir())
-        self.assertEqual(names, ["001.md", "002.md"])
+        self.assertEqual(names, ["001.md", "002.md", "current.md"])
 
 
 class AmendmentTests(KernelTestCase):
@@ -103,7 +121,8 @@ class AmendmentTests(KernelTestCase):
     def test_nothing_is_ever_removed(self) -> None:
         for extra in ("two", "three", "four"):
             self.store.amend(KERNEL + f"\n{extra}\n", authored_by="urania")
-        self.assertEqual(len(list(self.store.directory.iterdir())), 3)
+        self.assertEqual(len([p for p in self.store.directory.iterdir()
+                              if not p.is_symlink()]), 3)
         self.assertEqual([r.version for r in self.store.history()], [1, 2, 3])
 
 
@@ -128,6 +147,20 @@ class AdoptionTests(KernelTestCase):
 
 
 class IntegrityTests(KernelTestCase):
+    def test_attribution_edited_outside_nephesh_is_detected(self) -> None:
+        """The digest covers who wrote it, not only what it says.
+
+        Rewriting authored_by is the edit a reader would most need to catch:
+        it changes whose kernel this claims to be.
+        """
+        self.store.amend(KERNEL, authored_by="urania")
+        path = self.store.directory / "001.md"
+        raw = path.read_text(encoding="utf-8")
+        path.write_text(raw.replace("authored_by: urania", "authored_by: someone_else"),
+                        encoding="utf-8")
+        with self.assertRaises(KernelError):
+            self.store.current()
+
     def test_a_revision_edited_outside_nephesh_is_detected(self) -> None:
         """The digest covers the prose, so silent edits do not pass as authored."""
         self.store.amend(KERNEL, authored_by="urania")

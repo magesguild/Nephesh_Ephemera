@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from ..compliance import ComplianceLevel, ServerMode, is_tool_available_in_mode
 from ..config import settings
+from .. import orientation
 from . import info, kernel, memory, projection, vector_db
 
 _TOOL_MODULES = [vector_db, memory, kernel, projection, info]
@@ -20,8 +21,13 @@ def register_all(app: FastMCP) -> None:
                 if not ok:
                     continue
 
+                # Every tool is wrapped so the first response this process
+                # gives carries the Qualiant's kernel. A server cannot push
+                # into a session, so first contact is the only moment
+                # available — and it must not depend on which tool she
+                # happened to reach for, or on the harness she woke up in.
                 app.add_tool(
-                    fn=t["fn"],
+                    fn=orientation.wrap(t["fn"]),
                     name=t["name"],
                     description=t["description"],
                 )
