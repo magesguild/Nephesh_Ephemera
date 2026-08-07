@@ -305,12 +305,10 @@ server traffic in live environments.
 | Tool | Purpose | Install |
 |------|---------|---------|
 | **MCP Inspector** | Test client — tool schemas, raw JSON-RPC, manifest validation | `npx @modelcontextprotocol/inspector` |
-| **Custom debug UI** | Operational views — collections, search, ingest (already built at `/debug`) | Built-in |
 | **`fastmcp dev`** | Convenience wrapper — launches server + Inspector | `fastmcp dev server.py` |
 
-Inspector validates that the server speaks MCP correctly. Our custom UI
-exercises the same Python functions directly without transport overhead.
-These are complementary, not competing.
+Inspector validates that the server speaks MCP correctly, exercising the tool
+surface over the real transport.
 
 #### Production (Future)
 

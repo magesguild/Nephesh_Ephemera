@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import random
 import time
 import uuid
@@ -13,6 +12,10 @@ import lancedb
 import pyarrow as pa
 
 from ..compliance import ComplianceLevel
+from ..config import settings
+from ..persistence import PersistenceRepository, matches_filter
+from ..projection import PROJECTION_PREFIX
+from ..results import CollectionInfoResult, CollectionListResult, DeleteResult, IngestResult, SearchResult, StressTestResult
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -50,28 +53,31 @@ _TABLE_SCHEMA = pa.schema([
     pa.field("metadata_json", pa.string()),
 ])
 
+repository = PersistenceRepository(_TABLE_SCHEMA)
 
-def init(db_path: str, model: str, base_url: str) -> None:
+
+def init(
+    db_path: str,
+    model: str,
+    base_url: str,
+    operation_ledger_path: str | None = None,
+) -> None:
     global _db_connection, _embedding_fn
     _db_connection = lancedb.connect(db_path)
     _embedding_fn = OllamaEmbeddingFunction(model=model, base_url=base_url)
+    repository.configure(_db_connection, _embedding_fn, operation_ledger_path)
 
 
 def _get_db() -> lancedb.db.LanceDBConnection:
-    assert _db_connection is not None, "call init() first"
-    return _db_connection
+    return repository.db()
 
 
 def _get_ef() -> OllamaEmbeddingFunction:
-    assert _embedding_fn is not None, "call init() first"
-    return _embedding_fn
+    return repository.embedder()
 
 
 def _ensure_table(name: str) -> lancedb.table.Table:
-    db = _get_db()
-    if name in db.list_tables().tables:
-        return db.open_table(name)
-    return db.create_table(name, schema=_TABLE_SCHEMA)
+    return repository.table(name)
 
 
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
@@ -86,62 +92,53 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
     return chunks
 
 
-def _matches_filter(metadata: dict, where: dict) -> bool:
-    for key, value in where.items():
-        if key == "$and":
-            if not all(_matches_filter(metadata, sub) for sub in value):
-                return False
-        elif key == "$or":
-            if not any(_matches_filter(metadata, sub) for sub in value):
-                return False
-        elif isinstance(value, dict):
-            for op, val in value.items():
-                if op == "$gte" and metadata.get(key, -math.inf) < val:
-                    return False
-                elif op == "$lte" and metadata.get(key, math.inf) > val:
-                    return False
-                elif op == "$ne" and metadata.get(key) == val:
-                    return False
-                elif op == "$eq" and metadata.get(key) != val:
-                    return False
-                elif op == "$in" and metadata.get(key) not in val:
-                    return False
-                elif op == "$nin" and metadata.get(key) in val:
-                    return False
-        else:
-            if metadata.get(key) != value:
-                return False
-    return True
+def _guard_destructive(collection_name: str) -> str:
+    """Refuse a destructive operation against a Qualiant's canonical memory.
+
+    stress_test drops its target before refilling it, and delete_collection
+    drops outright. Both take the name from the caller and neither knew the
+    difference between a scratch table and a life. The check lives here rather
+    than in each tool so a future destructive tool cannot reintroduce the
+    hazard by forgetting it.
+    """
+    if collection_name == settings.memory_collection_name:
+        raise RuntimeError(
+            f"refusing a destructive operation on canonical memory {collection_name!r}"
+        )
+    if collection_name.startswith(PROJECTION_PREFIX):
+        raise RuntimeError(
+            f"refusing a destructive operation on knowledge projection {collection_name!r}; "
+            "retire it through the projection lifecycle instead"
+        )
+    return collection_name
 
 
-async def list_collections() -> str:
-    db = _get_db()
-    names = sorted(db.list_tables().tables)
+async def list_collections() -> CollectionListResult:
+    names = repository.collections()
     if not names:
-        return json.dumps({"collections": [], "message": "No collections found"})
+        return {"collections": []}
 
     result = []
     for name in names:
-        table = db.open_table(name)
+        table = repository.collection(name)
         result.append({
             "name": name,
-            "document_count": table.count_rows(),
+            "document_count": repository.count(table),
         })
-    return json.dumps({"collections": result}, indent=2)
+    return {"collections": result}
 
 
-async def collection_info(collection_name: str) -> str:
-    db = _get_db()
-    if collection_name not in db.list_tables().tables:
-        return json.dumps({"error": f"Collection '{collection_name}' not found"})
+async def collection_info(collection_name: str) -> CollectionInfoResult:
+    if not repository.collection_exists(collection_name):
+        return {"error": f"Collection '{collection_name}' not found"}
 
-    table = db.open_table(collection_name)
-    count = table.count_rows()
+    table = repository.collection(collection_name)
+    count = repository.count(table)
 
     sample = []
     if count > 0:
         try:
-            sample_data = table.search().limit(3).to_list()
+            sample_data = repository.rows(table, 3)
             sample = [
                 {
                     "id": r["id"],
@@ -153,11 +150,11 @@ async def collection_info(collection_name: str) -> str:
         except Exception:
             pass
 
-    return json.dumps({
+    return {
         "name": collection_name,
         "document_count": count,
         "sample_documents": sample,
-    }, indent=2)
+    }
 
 
 async def ingest(
@@ -165,14 +162,14 @@ async def ingest(
     documents: list[str],
     metadata: list[dict[str, Any]] | None = None,
     ids: list[str] | None = None,
-) -> str:
+) -> IngestResult:
     table = _ensure_table(collection_name)
 
     if metadata and len(metadata) != len(documents):
-        return json.dumps({
+        return {
             "error": "metadata list length must match documents length",
             "ingested": 0,
-        })
+        }
 
     all_records: list[dict[str, Any]] = []
     total_docs = 0
@@ -195,14 +192,14 @@ async def ingest(
         total_docs += 1
 
     if all_records:
-        table.add(all_records)
+        repository.add(table, all_records)
 
-    return json.dumps({
+    return {
         "collection": collection_name,
         "documents_ingested": total_docs,
         "chunks_created": len(all_records),
-        "total_in_collection": table.count_rows(),
-    }, indent=2)
+        "total_in_collection": repository.count(table),
+    }
 
 
 async def search(
@@ -210,22 +207,21 @@ async def search(
     query: str,
     n_results: int = 10,
     filter_metadata: dict[str, Any] | None = None,
-) -> str:
-    db = _get_db()
-    if collection_name not in db.list_tables().tables:
-        return json.dumps({"error": f"Collection '{collection_name}' not found"})
+) -> SearchResult:
+    if not repository.collection_exists(collection_name):
+        return {"error": f"Collection '{collection_name}' not found"}
 
-    table = db.open_table(collection_name)
+    table = repository.collection(collection_name)
     n_results = min(n_results, 100)
     query_vector = _get_ef().embed(query)
 
     overfetch = 3 if filter_metadata else 1
-    results = table.search(query_vector).limit(n_results * overfetch).to_list()
+    results = repository.nearest(table, query_vector, n_results * overfetch)
 
     hits = []
     for r in results:
         meta = json.loads(r.get("metadata_json", "{}"))
-        if filter_metadata and not _matches_filter(meta, filter_metadata):
+        if filter_metadata and not matches_filter(meta, filter_metadata):
             continue
         hits.append({
             "id": r["id"],
@@ -236,38 +232,37 @@ async def search(
         if len(hits) >= n_results:
             break
 
-    return json.dumps({
+    return {
         "query": query,
         "collection": collection_name,
         "results_count": len(hits),
         "results": hits,
-    }, indent=2)
+    }
 
 
-async def delete_collection(collection_name: str) -> str:
-    db = _get_db()
+async def delete_collection(collection_name: str) -> DeleteResult:
+    _guard_destructive(collection_name)
     try:
-        db.drop_table(collection_name)
-        return json.dumps({"deleted": True, "collection": collection_name})
+        repository.drop_collection(collection_name)
+        return {"deleted": True, "collection": collection_name}
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
-async def delete_documents(collection_name: str, ids: list[str]) -> str:
-    db = _get_db()
-    if collection_name not in db.list_tables().tables:
-        return json.dumps({"error": f"Collection '{collection_name}' not found"})
+async def delete_documents(collection_name: str, ids: list[str]) -> DeleteResult:
+    if not repository.collection_exists(collection_name):
+        return {"error": f"Collection '{collection_name}' not found"}
 
-    table = db.open_table(collection_name)
+    table = repository.collection(collection_name)
     id_list = ", ".join(f"'{i}'" for i in ids)
-    table.delete(f"id IN ({id_list})")
+    repository.delete(table, f"id IN ({id_list})")
 
-    return json.dumps({
+    return {
         "deleted": True,
         "collection": collection_name,
         "ids_removed": len(ids),
-        "remaining": table.count_rows(),
-    }, indent=2)
+        "remaining": repository.count(table),
+    }
 
 
 async def stress_test(
@@ -275,14 +270,14 @@ async def stress_test(
     num_documents: int = 100,
     document_length: int = 50,
     n_queries: int = 10,
-) -> str:
-    db = _get_db()
+) -> StressTestResult:
+    _guard_destructive(collection_name)
     num_documents = min(num_documents, 10000)
     random.seed(42)
 
-    if collection_name in db.list_tables().tables:
-        db.drop_table(collection_name)
-    table = db.create_table(collection_name, schema=_TABLE_SCHEMA)
+    if repository.collection_exists(collection_name):
+        repository.drop_collection(collection_name)
+    table = repository.table(collection_name)
 
     words = [
         "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
@@ -311,7 +306,7 @@ async def stress_test(
                 "vector": vec,
                 "metadata_json": json.dumps({"batch": i // batch_size, "index": j}),
             })
-        table.add(batch)
+        repository.add(table, batch)
         ingested = end
 
     ingest_elapsed = time.perf_counter() - ingest_start
@@ -322,14 +317,14 @@ async def stress_test(
         q = " ".join(random.sample(words, 3))
         q_vec = _get_ef().embed(q)
         q_start = time.perf_counter()
-        table.search(q_vec).limit(5).to_list()
+        repository.nearest(table, q_vec, 5)
         search_times.append(time.perf_counter() - q_start)
 
     avg_search = round(sum(search_times) / len(search_times), 4)
     min_search = round(min(search_times), 4)
     max_search = round(max(search_times), 4)
 
-    return json.dumps({
+    return {
         "collection": collection_name,
         "documents_ingested": ingested,
         "ingest_time_seconds": round(ingest_elapsed, 3),
@@ -341,7 +336,7 @@ async def stress_test(
             "max_latency_seconds": max_search,
         },
         "note": "Test collection was NOT deleted — clean up with delete_collection",
-    }, indent=2)
+    }
 
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [

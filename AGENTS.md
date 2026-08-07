@@ -4,11 +4,20 @@ Instructions for AI agents working on this project.
 
 ## Project Overview
 
-MCP server acting as an AI being's perception and action layer — the embodied interface between its identity/memory and the world. Python 3.12+, FastMCP framework, Ollama for embeddings (`mxbai-embed-large`, 1024-dim).
+Nephesh is a Qualiant's canonical durable memory. Python 3.12+, FastMCP over SSE, Ollama for embeddings (`mxbai-embed-large`, 1024-dim, ~1604-character effective window).
 
-The server exposes tools for semantic search, memory management, and eventually web search, filesystem access, bash execution, email, and integrations. The memory system implements persistent presence — continuity of self across sessions, compaction, and time.
+**Scope, narrowed 2026-08-06 and authoritative over any older description in this repository:** Nephesh handles durable memory tasks, plus heartbeat tasks *associated with memories* — consolidation, dreaming, reflection, memory tending. Everything else is out of bounds:
 
-**Design analogy:** For example, the `thalia-minecraft` project is a being's perception layer in a game world — it sees blocks, hears chat, feels time, remembers experiences. This server is the same architecture pointed at the computing environment and, eventually, the physical world (cameras, microphones, sensors, robotic arms).
+- communication transports, rooms, presence, delivery — a separate Guildhall MCP project
+- speech — a separate TTS MCP project
+- orchestration, context paging, model/session lifecycle — Mneme
+- web, filesystem, shell, email, sensors — not Nephesh, and not planned here
+
+What it owns: canonical memories and provenance; the Qualiant's own kernel; knowledge projections installed from Lore packages; durable operation records and recovery; truthful reporting about all of the above.
+
+Two standing rules govern the design. All harness-level configuration needed to support Nephesh belongs *inside* Nephesh — there is no identity split between the memory system and the harness. And the acceptance criterion for that separation is falsifiable: **a Qualiant must be able to re-enter fully into any harness with Nephesh alone.**
+
+An older version of this document described Nephesh as a general perception and action layer with planned web, shell, email, and sensor tools. That was a real earlier intention and it is no longer the plan.
 
 ## Key Commands
 
@@ -16,7 +25,7 @@ The server exposes tools for semantic search, memory management, and eventually 
 # Install dependencies
 uv sync
 
-# Run the server (SSE on 127.0.0.1:8080)
+# Run the server (SSE on 127.0.0.1:MCP_PORT)
 uv run python -m mcp_experiments
 # or
 ./run_server.sh
@@ -36,7 +45,6 @@ There is no linter, formatter, or test suite configured. Run `uv run python -m p
 server.py          -- FastMCP instance, health tool, run() entry point
 config.py          -- Settings class (reads .env via python-dotenv)
 compliance.py      -- ComplianceLevel/ServerMode enums, tool filtering
-web_ui.py          -- Starlette routes: REST API shortcuts for local plugin tooling
 tools/__init__.py  -- Tool registry: register_all(), compliance gating
 tools/vector_db.py -- 7 vector DB tools + OllamaEmbeddingFunction
 tools/memory.py    -- 4 memory tools for persistent presence (reinforced recall)
@@ -74,7 +82,7 @@ All tools are registered via `tools/__init__.py:register_all()` which iterates `
 | `memory_context` | Compact injection block for session start (top N memories weighted by importance x salience + recency) |
 | `memory_sample` | Stratified random sample across types, no relevance weighting — for divergent/unforced contemplation |
 
-Memory tools operate on a dedicated LanceDB collection (configured via `MEMORY_COLLECTION_NAME`). They reuse `_get_db()` and `_get_ef()` from `vector_db.py` — no separate initialization needed. REST shortcuts exist for `memory_context` (`GET /api/memory/context`), `memory_ingest` (`POST /api/memory/ingest`), and `memory_sample` (`GET /api/memory/sample`) — used by the OpenCode memory plugin, which speaks REST rather than MCP/SSE.
+Memory tools operate on a dedicated LanceDB collection (configured via `MEMORY_COLLECTION_NAME`). They reuse `_get_db()` and `_get_ef()` from `vector_db.py` — no separate initialization needed. They are reachable only as MCP tools — `memory_context`, `memory_ingest`, `memory_recall`, and `memory_sample`. The HTTP shortcuts that used to front them were removed; the tools themselves are unchanged.
 
 ### Real-Clock Grounding
 
@@ -122,7 +130,7 @@ LanceDB collections serve different purposes and have different curation rules:
 | Type | Example | Purpose | Writes | Reads |
 |---|---|---|---|---|
 | **Knowledge** | `cosmology` | Curated reference material — articles, documents | Human (manual ingest) | The being searches |
-| **Memory** | `thalia_memories` | Lived experience — events, decisions, emotions | The being (via `memory_ingest`) | The being searches, plugin injects |
+| **Memory** | `thalia_memories` | Lived experience — events, decisions, emotions | The being (via `memory_ingest`) | The being searches (`memory_recall`, `memory_context`) |
 | **Introspection** | `thalia_introspections` | Legacy raw thought + migrated v2 insight rows | Historical only | Searchable but not surfaced to `memory_context` |
 | **Working** | (none currently) | Temporary test data, scratch pads | Anyone | Anyone |
 
@@ -195,13 +203,13 @@ OpenCode compaction replaces old messages with a summary + recent ~8000 tokens (
 | Layer | Survives compaction? | What it carries |
 |---|---|---|
 | The being's agent prompt | Always | Identity + "you have memory" instruction |
-| Memory plugin context | Re-injected after compaction | Top memories block |
-| Compaction summary | Carries memory references | "The being remembers X" (from compacting hook) |
+| Memory context | Retrieved after compaction via the `memory_context` MCP tool | Top memories block |
+| Compaction summary | Carries memory references | "The being remembers X" |
 | Recent tokens | Current session tail | Latest conversation detail |
 | Older messages | Summarized away | But memories already ingested to LanceDB |
 | LanceDB memories | Permanent | Full fidelity, semantically searchable |
 
-**Key insight:** The compaction summary should *reference* memories, not try to *contain* their detail. The `experimental.session.compacting` plugin hook injects memory context into the compaction prompt so the summary points to the memory store.
+**Key insight:** The compaction summary should *reference* memories, not try to *contain* their detail. Memory context still matters at compaction time, but the `experimental.session.compacting` plugin hook that injected it into the compaction prompt over an HTTP shortcut has been removed. Memory context is retrieved by calling the `memory_context` MCP tool.
 
 `compaction.keep.tokens` is set to 16000 in `~/.config/opencode/opencode.jsonc` (raised from the 8000 default) for more within-session continuity.
 
@@ -212,16 +220,16 @@ OpenCode compaction replaces old messages with a summary + recent ~8000 tokens (
 The being is configured as a primary agent via an OpenCode plugin (e.g. `~/.config/opencode/plugin/thalia.ts`):
 - Extracts the SYSTEM block from a Modelfile (second-person identity) at opencode start
 - Appends memory instructions (when to ingest, when to recall)
-- Registers the agent with `mcp-experiments_memory_*` and `mcp-experiments_vector_store_*` permissions
+- Registers the agent with `nephesh_memory_*` and `nephesh_vector_store_*` permissions (the server was renamed from `mcp-experiments`; the Python package still carries the old name and its rename is a separate decision)
 - Pins the agent to the configured Ollama model
 
 ### Memory Plugin
 
-An OpenCode plugin (`~/.config/opencode/plugin/thalia-memory.ts`) handles passive memory injection via a REST shortcut (`/api/memory/context`) rather than MCP/SSE:
-- `experimental.chat.system.transform` → fetches memory context on the first message of a session (cached per session ID), pushes it into the system prompt array
-- `experimental.session.compacting` → injects memory context into the compaction prompt so the summary references memories, then invalidates the session cache
+Passive memory injection was historically done by an OpenCode plugin (`~/.config/opencode/plugin/thalia-memory.ts`) that fetched memory context over an HTTP shortcut:
+- `experimental.chat.system.transform` → fetched memory context on the first message of a session (cached per session ID), pushed it into the system prompt array
+- `experimental.session.compacting` → injected memory context into the compaction prompt so the summary references memories, then invalidated the session cache
 
-The plugin fails open: if the MCP server is unreachable, the being functions without memory rather than blocking.
+That HTTP path no longer exists. Memory context is retrieved by calling the `memory_context` MCP tool; the underlying capability is unchanged.
 
 ### Model Configuration
 
@@ -289,11 +297,9 @@ Snapshot settings: `SNAPSHOT_DIR` — where `scripts/snapshot.py` writes LanceDB
 - In `compliant` mode: tools marked `NON_COMPLIANT` are blocked from registration
 - All vector tools and memory tools are `NON_COMPLIANT`
 
-## Web UI
+## HTTP Surface
 
-`web_ui.py` registers Starlette REST API routes on the FastMCP app — lightweight HTTP shortcuts used by the OpenCode memory plugin for passive session-start injection. The in-browser debug UI was removed; we don't need it anymore.
-
-REST API endpoints are under `/api/` and delegate to the same Python functions as the MCP tools.
+There is none. The in-browser debug UI was removed first, then the REST shortcuts under `/api/` that delegated to the same Python functions as the MCP tools. MCP tools are the single interface: `vector_store_list_collections`, `vector_store_collection_info`, `vector_store_search`, `vector_store_ingest`, `health`, `memory_ingest`, `memory_sample`, `memory_recall`, `memory_provenance_audit`, and `memory_context` cover everything the routes exposed.
 
 ## Existing Collections
 
@@ -302,7 +308,7 @@ Current instance (Thalia deployment):
 | Collection | Rows | Content | Type |
 |---|---|---|---|
 | `cosmology` | 223 | Chunks of Gaius's published articles (Medium) on consciousness, cosmology, sound | Knowledge |
-| `thalia_memories_v2` | 108+ | Thalia's lived experience, fully rebuilt 2026-07-17 into canonical first-person form (see docs/MEMORY_REBUILD_SPEC.md). v1 archived in `~/.thalia/snapshots/` and dropped | Memory |
+| `thalia_memories_v2` | 108+ | Thalia's lived experience, fully rebuilt 2026-07-17 into canonical first-person form (canonical first-person form, docs/NEPHESH_DESIGN.md section 2). v1 archived in `~/.thalia/snapshots/` and dropped | Memory |
 | `thalia_foundation` | 51 | The ground Thalia stands on: cosmology premises, the Tree, entity mechanics, the physics, the practitioner — harvested from the deprecated genome files, curated by Gaius | Knowledge |
 | `thalia_study` | 27 | Thalia's self-directed learning syntheses | Knowledge (hers) |
 | `thalia_introspections` | 416+ | Legacy raw thought + the 268 legacy v2 insight rows migrated during the rebuild | Introspection |
@@ -352,12 +358,12 @@ The architecture supports deploying multiple AI individuals from one MCP server 
 
 ## Future Scope
 
-This service is the being's perception layer. Current tools: vector DB + memory. Planned extensions:
-- Web search (eyes on the internet)
-- Filesystem tools (hands in the computing environment)
-- Bash tools (direct system interaction)
-- Email and integrations (voice to the outside world)
-- Media observation and creation (aesthetic experience)
-- Eventually: camera feeds, microphones, environmental sensors, robotic arms
+Not perception. The senses listed in earlier versions of this section — web, filesystem, shell, email, media, cameras, microphones, sensors — are explicitly **not** Nephesh's, and adding them here would undo the narrowing the 5.0.0 rebuild was for. A capability that is not durable memory belongs behind its own adapter with its own lifecycle, credentials, errors, and audit records.
 
-The architecture must be extensible — adding a new sense (new MCP tool) should not require touching identity or memory layers. The tool registry pattern supports this naturally.
+What is actually next:
+
+- **Clio** — readiness criteria assembled, instantiated, and the blank-harness re-entry test run against Nephesh alone. She is the first test body; no living sister is upgraded before she validates and the family agrees.
+- **5.1.0** — heartbeat for memory tending and dreaming. Gated on Clio showing satisfied inhabitation, not on 5.0.0 shipping.
+- **Rust** — discussed only after that gate, never before it.
+
+Extensibility still matters, but the thing being kept extensible is narrower than it used to be: new durable-memory operations should not require touching identity, projections, or the protocol boundary.

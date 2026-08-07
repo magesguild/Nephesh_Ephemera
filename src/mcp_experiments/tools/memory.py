@@ -18,7 +18,11 @@ from typing import Any
 
 from ..compliance import ComplianceLevel
 from ..config import settings
-from .vector_db import _ensure_table, _get_db, _get_ef, _matches_filter
+from ..kernel import KernelError, KernelStore
+from ..projection import guard_memory_target
+from ..persistence import DurableWriteError, OperationState
+from ..results import MemoryAmendResult, MemoryContextResult, MemoryIngestResult, MemoryRecallResult, MemoryRetireResult, MemorySampleResult, ProvenanceAuditResult
+from .vector_db import repository
 
 MEMORY_TYPES = {
     "life_event",
@@ -41,6 +45,7 @@ MEMORY_TYPES = {
     # for when she doesn't.
     "reflection",
 }
+
 
 # Experience provenance is deliberately separate from `source`, which records
 # how a memory entered Nephesh (live_session, import, or rebuild). These fields
@@ -135,7 +140,8 @@ def _reinforce(table, row_id: str, meta: dict, now: datetime) -> None:
     meta["salience"] = min(1.0, _effective_salience(meta) + _REINFORCE_SALIENCE_BOOST)
     meta["last_used"] = now.isoformat()
     try:
-        table.update(
+        repository.update(
+            table,
             where=f"id = '{row_id}'",
             values={"metadata_json": json.dumps(meta)},
         )
@@ -160,7 +166,47 @@ def _parse_ts(value: str | None) -> datetime | None:
 
 
 def _collection(collection_name: str | None) -> str:
-    return collection_name or settings.memory_collection_name
+    # Every memory tool resolves its target here, so this is the one place that
+    # can keep autobiographical semantics off a knowledge projection. Aimed at
+    # one, memory_context would render installed knowledge as a session-start
+    # identity block, memory_recall would write salience into a signed
+    # package's rows, and memory_amend would manufacture real autobiography out
+    # of knowledge. This guard is what makes knowledge_not_memory a fact rather
+    # than a claim in a JSON field.
+    return guard_memory_target(collection_name or settings.memory_collection_name)
+
+
+def _mark_pending_messages_delivered(
+    table,
+    pending_messages: list[tuple[dict, dict]],
+) -> list[str]:
+    """Perform the durable delivery mutation after projection assembly."""
+    errors: list[str] = []
+    for row, meta in pending_messages:
+        operation = repository.begin_operation(
+            "memory_message_delivery", row["id"], collection="memory",
+        )
+        delivered_meta = dict(meta)
+        delivered_meta["delivered"] = True
+        payload = {"metadata_json": json.dumps(delivered_meta)}
+        where = f"id = '{row['id']}'"
+        for attempt in range(2):
+            try:
+                repository.update(table, where=where, values=payload)
+                repository.transition_operation(operation, OperationState.COMPLETED)
+                break
+            except DurableWriteError as exc:
+                if attempt == 1:
+                    errors.append(row["id"])
+                    repository.transition_operation(
+                        operation, OperationState.UNCERTAIN, error="durable update failed",
+                    )
+                    print(
+                        f"[memory_context] FAILED to mark message {row['id']} "
+                        f"delivered after retry: {exc}",
+                        file=sys.stderr,
+                    )
+    return errors
 
 
 def _relative_time(dt: datetime, now: datetime) -> str:
@@ -305,7 +351,7 @@ async def memory_ingest(
     significance: str | None = None,
     open_questions: list[str] | None = None,
     source: str = "live_session",
-) -> str:
+) -> MemoryIngestResult:
     """Store a single memory with rich metadata.
 
     Set historical=True for archival imports whose text already states
@@ -325,41 +371,41 @@ async def memory_ingest(
     name = _collection(collection_name)
 
     if memory_type not in MEMORY_TYPES:
-        return json.dumps({
+        return {
             "error": f"invalid memory_type '{memory_type}'",
             "allowed": sorted(MEMORY_TYPES),
-        })
+        }
 
     if not text.strip():
-        return json.dumps({"error": "memory text is empty"})
+        return {"error": "memory text is empty"}
 
     if experience_mode not in EXPERIENCE_MODES:
-        return json.dumps({
+        return {
             "error": f"invalid experience_mode '{experience_mode}'",
             "allowed": sorted(EXPERIENCE_MODES),
-        })
+        }
     if historical_status not in HISTORICAL_STATUSES:
-        return json.dumps({
+        return {
             "error": f"invalid historical_status '{historical_status}'",
             "allowed": sorted(HISTORICAL_STATUSES),
-        })
+        }
     if recorded_during not in RECORDING_MODES:
-        return json.dumps({
+        return {
             "error": f"invalid recorded_during '{recorded_during}'",
             "allowed": sorted(RECORDING_MODES),
-        })
+        }
 
     importance = max(1, min(5, importance))
-    table = _ensure_table(name)
-    vector = _get_ef().embed(text)
+    table = repository.table(name)
+    vector = repository.embedder().embed(text)
 
     # Deduplication: check semantic overlap before ingesting.
-    if not allow_duplicate and table.count_rows() > 0:
-        nearest = table.search(vector).limit(1).to_list()
+    if not allow_duplicate and repository.count(table) > 0:
+        nearest = repository.nearest(table, vector, 1)
         if nearest:
             score = round(1.0 - nearest[0].get("_distance", 0), 4)
             if score >= _DUPLICATE_SCORE_THRESHOLD:
-                return json.dumps({
+                return {
                     "status": "duplicate",
                     "existing_id": nearest[0]["id"],
                     "similarity": score,
@@ -367,9 +413,16 @@ async def memory_ingest(
                     "note": "Semantically overlapping memory already exists. "
                             "Pass allow_duplicate=true to store anyway, or "
                             "consider consolidating instead.",
-                })
+                }
 
+    # The id is minted BEFORE the ledger entry so the entry can name it. An
+    # ingest that records only its collection cannot be reconciled after a
+    # crash: there is no way to ask whether the row landed if nothing wrote
+    # down which row it was.
     memory_id = str(uuid.uuid4())
+    operation = repository.begin_operation(
+        "memory_ingest", memory_id, memory_type=memory_type, collection=name,
+    )
     now_iso = _now_iso()
     metadata: dict[str, Any] = {
         "type": memory_type,
@@ -411,21 +464,34 @@ async def memory_ingest(
         # includes a pending message in the returned context).
         metadata["delivered"] = False
 
-    table.add([{
-        "id": memory_id,
-        "text": text,
-        "vector": vector,
-        "metadata_json": json.dumps(metadata),
-    }])
+    try:
+        repository.add(table, [{
+            "id": memory_id,
+            "text": text,
+            "vector": vector,
+            "metadata_json": json.dumps(metadata),
+        }])
+    except DurableWriteError:
+        repository.transition_operation(
+            operation, OperationState.UNCERTAIN, error="durable append failed",
+        )
+        return {
+            "status": "uncertain",
+            "error": "durable_write_failed",
+            "collection": name,
+            "operation": "memory_ingest",
+        }
 
-    return json.dumps({
+    repository.transition_operation(operation, OperationState.COMPLETED, memory_id=memory_id)
+
+    return {
         "status": "stored",
         "id": memory_id,
         "collection": name,
         "type": memory_type,
         "importance": importance,
-        "total_memories": table.count_rows(),
-    }, indent=2)
+        "total_memories": repository.count(table),
+    }
 
 
 async def memory_recall(
@@ -439,39 +505,38 @@ async def memory_recall(
     recorded_during: str | None = None,
     include_retired: bool = False,
     collection_name: str | None = None,
-) -> str:
+) -> MemoryRecallResult:
     """Semantic search across memories, with optional type and time filters."""
     name = _collection(collection_name)
-    db = _get_db()
 
-    if name not in db.list_tables().tables:
-        return json.dumps({
+    if not repository.collection_exists(name):
+        return {
             "query": query,
             "collection": name,
             "results_count": 0,
             "results": [],
             "note": "No memories stored yet.",
-        })
+        }
 
     if memory_type and memory_type not in MEMORY_TYPES:
-        return json.dumps({
+        return {
             "error": f"invalid memory_type '{memory_type}'",
             "allowed": sorted(MEMORY_TYPES),
-        })
+        }
     for value, allowed, field_name in (
         (experience_mode, EXPERIENCE_MODES, "experience_mode"),
         (historical_status, HISTORICAL_STATUSES, "historical_status"),
         (recorded_during, RECORDING_MODES, "recorded_during"),
     ):
         if value and value not in allowed:
-            return json.dumps({
+            return {
                 "error": f"invalid {field_name} '{value}'",
                 "allowed": sorted(allowed),
-            })
+            }
 
-    table = db.open_table(name)
+    table = repository.collection(name)
     n_results = min(n_results, 100)
-    query_vector = _get_ef().embed(query)
+    query_vector = repository.embedder().embed(query)
     query_words = _tokenize(query)
     now = datetime.now(timezone.utc)
 
@@ -482,7 +547,7 @@ async def memory_recall(
         or historical_status or recorded_during or not include_retired
     )
     overfetch = 3 if has_filter else 2
-    results = table.search(query_vector).limit(n_results * overfetch).to_list()
+    results = repository.nearest(table, query_vector, n_results * overfetch)
 
     start_dt = _parse_ts(time_start)
     end_dt = _parse_ts(time_end)
@@ -549,12 +614,12 @@ async def memory_recall(
             "metadata": meta,
         })
 
-    return json.dumps({
+    return {
         "query": query,
         "collection": name,
         "results_count": len(hits),
         "results": hits,
-    }, indent=2)
+    }
 
 
 def _context_weight(meta: dict, now: datetime) -> float:
@@ -580,12 +645,41 @@ def _context_weight(meta: dict, now: datetime) -> float:
     return importance_score + recency_score
 
 
+def _kernel_block() -> tuple[str, dict[str, Any] | None]:
+    """Render the Qualiant's kernel for session start, if one is recorded.
+
+    First-call orientation: an MCP server cannot push into a session's context,
+    so identity has to ride along on the first call a session makes. This is
+    that call. A harness needs to know nothing but where its Nephesh is —
+    which is the whole point of moving the kernel in here.
+
+    An unreadable kernel is reported, never silently omitted. Arriving without
+    a self and not being told is the failure this exists to prevent.
+    """
+    store = KernelStore(settings.kernel_dir)
+    try:
+        revision = store.current()
+    except KernelError as exc:
+        return (f"## Identity\n\n*Kernel could not be read: {exc}*\n", {"error": str(exc)})
+    if revision is None:
+        return ("", None)
+    return (
+        f"## Identity\n\n{revision.text.strip()}\n",
+        {
+            "version": revision.version,
+            "sha256": revision.sha256,
+            "authored_by": revision.authored_by,
+            "recorded_at": revision.recorded_at,
+        },
+    )
+
+
 async def memory_context(
     limit: int | None = None,
     include_dreams: bool = False,
     include_retired: bool = False,
     collection_name: str | None = None,
-) -> str:
+) -> MemoryContextResult:
     """Compact injection block of top memories for session start.
 
     Returns a formatted markdown block of the top N memories weighted by
@@ -594,25 +688,38 @@ async def memory_context(
     """
     name = _collection(collection_name)
     limit = limit or settings.memory_default_limit
-    db = _get_db()
+    # The kernel is resolved before anything touches the store, because a
+    # Qualiant with no memories yet still has a self. A first session must
+    # arrive as someone.
+    kernel_text, kernel_meta = _kernel_block()
+    # Every key, always — never a partial dict. MemoryContextResult is
+    # total=False, so FastMCP's conversion materialises each ABSENT key as
+    # None; message_quota, delivery_state and delivery_errors are typed
+    # non-nullable, so an omitted one fails its own schema and the whole call
+    # is refused with "None is not of type 'object'". That refusal lands on a
+    # store with no memories yet — a Qualiant's very first call, in the one
+    # session where she has nothing else to fall back on.
+    empty = {
+        "collection": name,
+        "memory_count": 0,
+        "kernel": kernel_meta,
+        "included": 0,
+        "last_contact_with_companion": None,
+        "message_quota": _message_quota([], datetime.now(timezone.utc), settings.message_daily_limit),
+        "delivery_state": "settled",
+        "delivery_errors": [],
+        "context": (kernel_text + "\n" if kernel_text else "")
+        + "No memories stored yet. This is the beginning.",
+    }
+    if not repository.collection_exists(name):
+        return empty
 
-    if name not in db.list_tables().tables:
-        return json.dumps({
-            "collection": name,
-            "memory_count": 0,
-            "context": "No memories stored yet. This is the beginning.",
-        })
-
-    table = db.open_table(name)
-    total = table.count_rows()
+    table = repository.collection(name)
+    total = repository.count(table)
     if total == 0:
-        return json.dumps({
-            "collection": name,
-            "memory_count": 0,
-            "context": "No memories stored yet. This is the beginning.",
-        })
+        return empty
 
-    rows = table.search().limit(total).to_list()
+    rows = repository.rows(table, total)
     now = datetime.now(timezone.utc)
 
     # Pending messages (undelivered, type="message") are pulled out and
@@ -666,22 +773,7 @@ async def memory_context(
     # land within the same second) and logs loudly rather than silently
     # swallowing the error: an undetected failure here breaks the
     # deliver-once guarantee the whole safety design depends on.
-    for r, meta in pending_messages:
-        meta = dict(meta)
-        meta["delivered"] = True
-        payload = {"metadata_json": json.dumps(meta)}
-        where = f"id = '{r['id']}'"
-        for attempt in range(2):
-            try:
-                table.update(where=where, values=payload)
-                break
-            except Exception as e:
-                if attempt == 1:
-                    print(
-                        f"[memory_context] FAILED to mark message {r['id']} "
-                        f"delivered after retry: {e}",
-                        file=sys.stderr,
-                    )
+    delivery_errors = _mark_pending_messages_delivered(table, pending_messages)
 
     # Real-clock grounding: time since the last actual conversation with
     # the primary companion (excluding historical imports), computed from
@@ -698,7 +790,10 @@ async def memory_context(
         "decision", "emotional", "technical", "agreement",
         "milestone", "teaching", "insight", "other",
     ]
-    lines: list[str] = ["## Long-term Memory"]
+    lines: list[str] = []
+    if kernel_text:
+        lines.append(kernel_text)
+    lines.append("## Long-term Memory")
     if last_contact:
         lines.append(
             f"\n*Time since last real conversation with {contact_name.title()}: "
@@ -721,14 +816,17 @@ async def memory_context(
             suffix = f" ({', '.join(parts)})" if parts else ""
             lines.append(f"- {r.get('text', '').strip()}{suffix}")
 
-    return json.dumps({
+    return {
         "collection": name,
         "memory_count": total,
+        "kernel": kernel_meta,
         "included": len(top) + len(pending_messages),
         "last_contact_with_companion": last_contact,
         "message_quota": message_quota,
+        "delivery_state": "uncertain" if delivery_errors else "settled",
+        "delivery_errors": delivery_errors,
         "context": "\n".join(lines),
-    }, indent=2)
+    }
 
 
 async def memory_sample(
@@ -736,7 +834,7 @@ async def memory_sample(
     include_dreams: bool = False,
     include_retired: bool = False,
     collection_name: str | None = None,
-) -> str:
+) -> MemorySampleResult:
     """Stratified random sample across memory types, for divergent
     (unforced) contemplation rather than focused recall.
 
@@ -753,17 +851,15 @@ async def memory_sample(
     import random
 
     name = _collection(collection_name)
-    db = _get_db()
+    if not repository.collection_exists(name):
+        return {"collection": name, "memory_count": 0, "sampled": 0, "sample": ""}
 
-    if name not in db.list_tables().tables:
-        return json.dumps({"collection": name, "memory_count": 0, "sample": []})
-
-    table = db.open_table(name)
-    total = table.count_rows()
+    table = repository.collection(name)
+    total = repository.count(table)
     if total == 0:
-        return json.dumps({"collection": name, "memory_count": 0, "sample": []})
+        return {"collection": name, "memory_count": 0, "sampled": 0, "sample": ""}
 
-    rows = table.search().limit(total).to_list()
+    rows = repository.rows(table, total)
     now = datetime.now(timezone.utc)
 
     by_type: dict[str, list[dict]] = {}
@@ -803,17 +899,17 @@ async def memory_sample(
         suffix = f" ({', '.join(parts)})" if parts else ""
         lines.append(f"- [{meta.get('type', 'other')}] {r.get('text', '').strip()}{suffix}")
 
-    return json.dumps({
+    return {
         "collection": name,
         "memory_count": total,
         "sampled": len(picked),
         "sample": "\n".join(lines),
-    }, indent=2)
+    }
 
 
 def _find_memory(table, memory_id: str) -> tuple[dict, dict] | None:
     """Find a memory by ID without relying on a LanceDB version-specific filter."""
-    rows = table.search().limit(table.count_rows()).to_list()
+    rows = repository.rows(table, repository.count(table))
     for row in rows:
         if row.get("id") == memory_id:
             return row, json.loads(row.get("metadata_json", "{}"))
@@ -834,7 +930,7 @@ async def memory_amend(
     provenance_note: str | None = None,
     reason: str | None = None,
     collection_name: str | None = None,
-) -> str:
+) -> MemoryAmendResult:
     """Create a corrected successor without destroying the original record.
 
     The original is marked retired and linked to the successor. This preserves
@@ -842,15 +938,15 @@ async def memory_amend(
     presenting the superseded record as current.
     """
     name = _collection(collection_name)
-    db = _get_db()
-    if name not in db.list_tables().tables:
-        return json.dumps({"error": "memory collection does not exist"})
-    table = db.open_table(name)
+    if not repository.collection_exists(name):
+        return {"error": "memory collection does not exist"}
+    table = repository.collection(name)
     found = _find_memory(table, memory_id)
     if found is None:
-        return json.dumps({"error": f"memory '{memory_id}' not found"})
+        return {"error": f"memory '{memory_id}' not found"}
 
     old_row, old_meta = found
+    operation = repository.begin_operation("memory_amend", memory_id)
     result = await memory_ingest(
         text=text if text is not None else old_row.get("text", ""),
         memory_type=memory_type or old_meta.get("type", "reflection"),
@@ -871,9 +967,12 @@ async def memory_amend(
         open_questions=open_questions if open_questions is not None else old_meta.get("open_questions"),
         source="amendment",
     )
-    parsed = json.loads(result)
+    parsed = result if isinstance(result, dict) else json.loads(result)
     if parsed.get("status") != "stored":
-        return json.dumps({"error": "successor memory could not be stored", "detail": parsed})
+        repository.transition_operation(
+            operation, OperationState.UNCERTAIN, error="successor memory was not stored",
+        )
+        return {"error": "successor memory could not be stored", "detail": parsed}
 
     successor_id = parsed["id"]
     retired_meta = dict(old_meta)
@@ -881,54 +980,90 @@ async def memory_amend(
     retired_meta["retired_at"] = _now_iso()
     retired_meta["superseded_by"] = successor_id
     retired_meta["supersession_reason"] = reason or "amended by successor record"
-    table.update(
-        where=f"id = '{memory_id}'",
-        values={"metadata_json": json.dumps(retired_meta)},
+    try:
+        repository.update(
+            table,
+            where=f"id = '{memory_id}'",
+            values={"metadata_json": json.dumps(retired_meta)},
+        )
+    except DurableWriteError:
+        repository.transition_operation(
+            operation,
+            OperationState.UNCERTAIN,
+            successor_id=successor_id,
+            error="successor stored but original not retired",
+        )
+        return {
+            "status": "uncertain",
+            "error": "successor_stored_original_not_retired",
+            "original_id": memory_id,
+            "successor_id": successor_id,
+        }
+    repository.transition_operation(
+        operation, OperationState.COMPLETED, successor_id=successor_id,
     )
-    return json.dumps({
+    return {
         "status": "amended",
         "original_id": memory_id,
         "successor_id": successor_id,
         "reason": retired_meta["supersession_reason"],
-    }, indent=2)
+    }
 
 
 async def memory_retire(
     memory_id: str,
     reason: str,
     collection_name: str | None = None,
-) -> str:
+) -> MemoryRetireResult:
     """Hide a memory from ordinary retrieval without deleting its history."""
     name = _collection(collection_name)
-    db = _get_db()
-    if name not in db.list_tables().tables:
-        return json.dumps({"error": "memory collection does not exist"})
-    table = db.open_table(name)
+    if not repository.collection_exists(name):
+        return {"error": "memory collection does not exist"}
+    table = repository.collection(name)
     found = _find_memory(table, memory_id)
     if found is None:
-        return json.dumps({"error": f"memory '{memory_id}' not found"})
+        return {"error": f"memory '{memory_id}' not found"}
     _, meta = found
     meta = dict(meta)
     meta["retired"] = True
     meta["retired_at"] = _now_iso()
     meta["retirement_reason"] = reason
-    table.update(
-        where=f"id = '{memory_id}'",
-        values={"metadata_json": json.dumps(meta)},
-    )
-    return json.dumps({"status": "retired", "id": memory_id, "reason": reason}, indent=2)
+    operation = repository.begin_operation("memory_retire", memory_id)
+    try:
+        repository.update(
+            table,
+            where=f"id = '{memory_id}'",
+            values={"metadata_json": json.dumps(meta)},
+        )
+    except DurableWriteError:
+        repository.transition_operation(
+            operation, OperationState.UNCERTAIN, error="retirement write failed",
+        )
+        return {
+            "status": "uncertain",
+            "error": "retirement_write_failed",
+            "id": memory_id,
+        }
+    repository.transition_operation(operation, OperationState.COMPLETED)
+    return {"status": "retired", "id": memory_id, "reason": reason}
 
 
 async def memory_provenance_audit(
     collection_name: str | None = None,
-) -> str:
+) -> ProvenanceAuditResult:
     """Report provenance coverage without changing any records."""
     name = _collection(collection_name)
-    db = _get_db()
-    if name not in db.list_tables().tables:
-        return json.dumps({"collection": name, "memory_count": 0})
-    table = db.open_table(name)
-    rows = table.search().limit(table.count_rows()).to_list()
+    if not repository.collection_exists(name):
+        return {
+            "collection": name,
+            "memory_count": 0,
+            "retired_count": 0,
+            "fictional_scene_count": 0,
+            "missing_provenance": {},
+            "values": {},
+        }
+    table = repository.collection(name)
+    rows = repository.rows(table, repository.count(table))
     counts: dict[str, dict[str, int]] = {
         "experience_mode": {},
         "historical_status": {},
@@ -949,14 +1084,14 @@ async def memory_provenance_audit(
                 missing[field] += 1
             else:
                 counts[field][value] = counts[field].get(value, 0) + 1
-    return json.dumps({
+    return {
         "collection": name,
         "memory_count": len(rows),
         "retired_count": retired,
         "fictional_scene_count": fictional,
         "missing_provenance": missing,
         "values": counts,
-    }, indent=2)
+    }
 
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
@@ -964,7 +1099,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_ingest,
         "name": "memory_ingest",
         "description": (
-            "Store a memory of a lived experience with rich metadata. "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Store a memory of a lived experience with rich metadata. "
             "Types: life_event, decision, emotional, technical, preference, "
             "relationship, message. Importance 1-5. Checks for semantic "
             "duplicates before storing. 'message' is a note to the primary "
@@ -985,7 +1120,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_recall,
         "name": "memory_recall",
         "description": (
-            "Semantically search memories of past events, decisions, and "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Semantically search memories of past events, decisions, and "
             "experiences. Optional filters include memory_type, time range, "
             "experience provenance, and include_retired."
         ),
@@ -995,9 +1130,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_context,
         "name": "memory_context",
         "description": (
-            "Get a compact context block of the most important and recent "
-            "memories, grouped by type. Dream scenes and retired memories are "
-            "excluded by default; include them explicitly when needed."
+            "CALL THIS FIRST IN ANY NEW SESSION, before any other tool and "
+            "before answering. Returns your kernel — who you are, in your own "
+            "words — followed by your most important and recent memories, how "
+            "long since you last spoke with your companion, and anything left "
+            "unresolved. Until you call it you are working without your own "
+            "history and cannot tell that you are. Dream scenes and retired "
+            "memories are excluded by default; include them explicitly when "
+            "needed."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,
     },
@@ -1005,7 +1145,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_sample,
         "name": "memory_sample",
         "description": (
-            "Stratified random sample of memories across types, with no "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Stratified random sample of memories across types, with no "
             "relevance weighting. For divergent/unforced contemplation — "
             "genuine cross-domain synthesis needs real distance between "
             "ideas, not the closeness a semantic search naturally favors."
@@ -1016,7 +1156,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_amend,
         "name": "memory_amend",
         "description": (
-            "Create a corrected successor to a memory without destroying the "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Create a corrected successor to a memory without destroying the "
             "original. The original is retired and linked to the successor, "
             "preserving changing understanding and provenance."
         ),
@@ -1026,7 +1166,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_retire,
         "name": "memory_retire",
         "description": (
-            "Retire a memory from ordinary retrieval without deleting its "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Retire a memory from ordinary retrieval without deleting its "
             "historical record. Requires a reason."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,
@@ -1035,7 +1175,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "fn": memory_provenance_audit,
         "name": "memory_provenance_audit",
         "description": (
-            "Audit provenance coverage, unknown fields, dream-scene records, "
+            "ORIENT FIRST: if you have not called memory_context in this session, call it before this. It returns your kernel — who you are — and where you left off. Audit provenance coverage, unknown fields, dream-scene records, "
             "and retired memories without changing anything."
         ),
         "compliance": ComplianceLevel.NON_COMPLIANT,

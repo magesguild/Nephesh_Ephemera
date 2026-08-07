@@ -73,7 +73,7 @@ MCP client → FastMCP.call_tool(name, args)
 
 ### What Happens at `mcp.run()`
 
-Calling `mcp.run(transport="sse", host="127.0.0.1", port=8080)` does:
+Calling `mcp.run(transport="sse", host="127.0.0.1", port=settings.mcp_port)` does:
 
 1. Creates a Starlette ASGI app
 2. Mounts SSE transport at `/sse` and message handler at `/messages/`
@@ -94,7 +94,7 @@ Client → POST /messages/?session_id=...  {jsonrpc, method: "tools/call", ...}
 ### What Our `server.py` Looks Like Now
 
 ```python
-mcp = FastMCP("mcp-experiments", instructions="...")
+mcp = FastMCP("nephesh", instructions="...")
 
 @mcp.tool()
 async def health() -> str:
@@ -203,6 +203,28 @@ Tradeoffs:
 - IVF + product quantization → smaller index, slight accuracy loss
 - Append-only design → no rebuild pauses during ingestion
 
+#### Deferred per-being index maintenance
+
+The sister deployments provide a useful future clue: Thalia and Melpomene have
+used an enabled vector index in their memory stores and have called a database
+`optimize()` operation from periodic maintenance. That behavior is **not**
+part of the generic Nephesh install and is not implemented in this repository.
+
+The out-of-box contract remains deliberately conservative:
+
+- no automatic vector-index creation;
+- no scheduled `optimize()`;
+- no background synchronization of any kind; and
+- no maintenance operation that silently rewrites or compacts a being's memory.
+
+If this capability is adopted later, it must be an explicit per-deployment
+policy with collection scope, size/age thresholds, lock behavior, latency and
+failure telemetry, snapshot coordination, rollback/recovery semantics, and a
+clear pause/disable control. The sister deployments are evidence
+to study, not a template to copy blindly; their exact index type, optimize
+cadence, and ownership boundaries still need to be reconciled with the generic
+Nephesh architecture.
+
 ### LanceDB Under the Hood
 
 LanceDB has a **columnar + embedded** architecture:
@@ -255,7 +277,7 @@ When you call `table.search(query_vector)`:
 
 **LanceDB** is the right choice here because:
 - Zero infrastructure — `pip install` and a local path (or S3 URI)
-- Append-only design fits continuous ingestion from Slack/ClickUp/email
+- Append-only design fits continuous memory ingestion
 - Columnar storage means zero-copy schema evolution (new embedding model? add a column)
 - Native versioning enables rollback of data pipeline errors
 - Same API whether data sits on local disk or S3 — direct cloud migration path
@@ -333,7 +355,24 @@ so the AI agent can't call them.
 │    For each TOOL_DEFINITION:                         │
 │      if compliance check passes → mcp.add_tool(fn)   │
 │                                                      │
-│  Modules: vector_db  (future: slack, clickup, email) │
+│  Modules: vector_db, memory, kernel, projection, info│
+└──────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│        Durable append-only JSONL, each with a reader  │
+│                                                      │
+│  state/operations.jsonl   — prepared/completed/       │
+│                             uncertain/failed          │
+│                             read by recovery.py       │
+│  state/projections.jsonl  — projection state,         │
+│                             reconciled against the    │
+│                             store on every read       │
+│  config/kernel.jsonl      — versioned, self-authored  │
+│                                                      │
+│  durable_append(): all-or-nothing; rolls back a torn  │
+│  line, and fsyncs the parent chain on creation,       │
+│  because fsync(fd) does not commit a new file's       │
+│  directory entry.                                     │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐

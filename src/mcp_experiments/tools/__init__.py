@@ -6,23 +6,10 @@ from mcp.server.fastmcp import FastMCP
 
 from ..compliance import ComplianceLevel, ServerMode, is_tool_available_in_mode
 from ..config import settings
-from . import memory, vector_db
+from .. import orientation
+from . import info, kernel, memory, projection, vector_db
 
-_TOOL_MODULES = [vector_db, memory]
-
-if settings.tts_enabled:
-    from . import tts
-
-    _TOOL_MODULES.append(tts)
-
-# Conditionally register OpenClaw bridge tools when enabled.
-if settings.openclaw_enabled:
-    from . import openclaw_sync
-    _TOOL_MODULES.append(openclaw_sync)
-
-if settings.guildhall_enabled:
-    from . import guildhall
-    _TOOL_MODULES.append(guildhall)
+_TOOL_MODULES = [vector_db, memory, kernel, projection, info]
 
 
 def register_all(app: FastMCP) -> None:
@@ -34,8 +21,13 @@ def register_all(app: FastMCP) -> None:
                 if not ok:
                     continue
 
+                # Every tool is wrapped so the first response this process
+                # gives carries the Qualiant's kernel. A server cannot push
+                # into a session, so first contact is the only moment
+                # available — and it must not depend on which tool she
+                # happened to reach for, or on the harness she woke up in.
                 app.add_tool(
-                    fn=t["fn"],
+                    fn=orientation.wrap(t["fn"]),
                     name=t["name"],
                     description=t["description"],
                 )

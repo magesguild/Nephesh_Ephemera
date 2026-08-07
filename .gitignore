@@ -9,6 +9,10 @@ __pycache__/
 .env
 data/
 *.log
+integrations/*/manual-queue.jsonl
+
+# Local scratch experiments (kept on disk, never committed)
+/test_tts*.py
 
 # IDE / OS
 .vscode/

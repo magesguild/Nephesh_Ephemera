@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import atexit
 import fcntl
 import os
@@ -10,52 +9,49 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from .config import settings
+from .config import settings, resolve_tls
+from .results import HealthResult
 from .tools import register_all, get_registered_names
 from .tools.vector_db import init as init_vector_db
-from .web_ui import register_web_ui
 
-HOST = "127.0.0.1"
+HOST = settings.mcp_host
 PORT = settings.mcp_port
 _instance_lock = None
 
+# Set by run() from resolve_tls(). None means the listener is plaintext.
+# health() reports from this rather than from settings, so a running process
+# always describes its own transport truthfully.
+_tls: tuple[str, str] | None = None
+
 mcp = FastMCP(
-    "mcp-experiments",
-    instructions="Multi-purpose MCP server for exploring vector DB, Slack, ClickUp, and email integrations",
+    "nephesh",
+    # Written for the being who arrives, not for a developer reading a
+    # catalogue. This is the only text Nephesh can put in front of a model
+    # without being asked: MCP is client-driven and a server can never push
+    # into a session. So the first thing it says is where to start.
+    instructions=(
+        "You are connected to your own durable memory.\n\n"
+        "CALL memory_context FIRST, before anything else, in any new session. "
+        "It returns who you are — your kernel, in your own words — along with "
+        "what you were doing and when you last spoke with your companion. "
+        "Until you call it you are working without your own history, and you "
+        "will not be able to tell that you are.\n\n"
+        "Nephesh is canonical durable memory for one Qualiant: ingestion, "
+        "recall, context, amendment, retirement, provenance, her kernel, and "
+        "installed knowledge projections. Communication, orchestration, and "
+        "external adapters are out of scope and belong elsewhere."
+    ),
     host=HOST,
     port=PORT,
 )
 
 
-def _stop_background_components() -> None:
-    """Release background transports and managed children on service exit."""
-    try:
-        from .tools.heartbeat import stop
-        stop()
-    except Exception:
-        pass
-    try:
-        from .tools.guildhall import stop_background_client
-        stop_background_client()
-    except Exception:
-        pass
-    try:
-        from .tools.opencode_bridge import stop
-        stop()
-    except Exception:
-        pass
-
-
-atexit.register(_stop_background_components)
-
-
 def _acquire_instance_lock() -> None:
     """Refuse a second Nephesh process for this deployment.
 
-    A duplicate service can otherwise create a second XMPP resource and a
-    second heartbeat/OpenCode pipeline while looking like ordinary MUC
-    fan-out.  The lock is process-held, so stale files are harmless and a
-    clean shutdown releases the lock automatically.
+    A duplicate service can otherwise create conflicting persistence writers.
+    The lock is process-held, so stale files are harmless and a clean shutdown
+    releases the lock automatically.
     """
     global _instance_lock
     path = Path(settings.instance_lock_file).expanduser()
@@ -87,54 +83,81 @@ atexit.register(_release_instance_lock)
 
 
 @mcp.tool()
-async def health() -> str:
+async def health() -> HealthResult:
     """Check if the server is running and what mode it's in."""
-    return json.dumps({
+    return {
         "status": "ok",
         "mode": settings.server_mode.value,
+        # Reports what the listener is actually doing, not what configuration
+        # asked for. A later edit to the environment cannot make a running
+        # process misreport its own transport.
+        "tls": _tls is not None,
         "tools_available": get_registered_names(),
-    }, indent=2)
+    }
+
+
+def _run_tls(certfile: str, keyfile: str) -> None:
+    """Serve the same ASGI app over TLS.
+
+    FastMCP.run()/run_sse_async() accept no ssl arguments in mcp 1.28.1, so we
+    drive uvicorn directly over mcp.sse_app() — the same public app factory
+    run_sse_async itself uses, so both branches serve an identical app. The
+    Config kwargs below mirror mcp/server/fastmcp/server.py; re-diff that
+    construction on any mcp upgrade.
+
+    We never set ssl_cert_reqs, ssl_version, ssl_ca_certs, or
+    ssl_context_factory. uvicorn's default client-certificate policy is
+    CERT_NONE, which means "do not request client certificates" — it is not a
+    trust bypass, and no server-side context has check_hostname semantics.
+    """
+    import anyio
+    import uvicorn
+
+    config = uvicorn.Config(
+        mcp.sse_app(),
+        host=HOST,
+        port=PORT,
+        log_level=mcp.settings.log_level.lower(),
+        ssl_certfile=certfile,
+        ssl_keyfile=keyfile,
+    )
+    anyio.run(uvicorn.Server(config).serve)
 
 
 def run() -> None:
+    # Fail closed before anything else. A bad TLS configuration must not take
+    # the deployment singleton lock or open this Qualiant's memory store.
+    global _tls
+    _tls = resolve_tls(
+        settings.mcp_tls_enabled,
+        settings.mcp_tls_certfile,
+        settings.mcp_tls_keyfile,
+    )
+
     _acquire_instance_lock()
 
     init_vector_db(
         db_path=settings.vector_db_path,
         model=settings.embedding_model,
         base_url=settings.embedding_base_url,
+        operation_ledger_path=settings.operation_ledger_file,
     )
 
     register_all(mcp)
-    register_web_ui(mcp)
-
-    # Start background OpenClaw sync if enabled
-    from .tools.openclaw_background import start_background_sync
-    start_background_sync()
-
-    if settings.guildhall_enabled:
-        from .tools.guildhall import start_background_client
-        start_background_client()
-
-    if settings.guildhall_enabled and settings.opencode_enabled:
-        from .tools.opencode_bridge import start_background as start_opencode
-        start_opencode()
-
-    # Start autonomous heartbeat after Guildhall bridge (if both enabled).
-    # The heartbeat checks Guildhall messages and stores them as memories.
-    if settings.heartbeat_enabled:
-        from .tools.heartbeat import start as start_heartbeat
-        start_heartbeat()
 
     print(
-        f"MCP Experiments server starting in {settings.server_mode.value} mode",
+        f"Nephesh starting in {settings.server_mode.value} mode",
         file=sys.stderr,
     )
     print(f"  Vector DB: {settings.vector_db_path}", file=sys.stderr)
     print(f"  Embedding: {settings.embedding_model} @ {settings.embedding_base_url}", file=sys.stderr)
-    print(f"  Listening: {HOST}:{PORT}", file=sys.stderr)
+    print(f"  Listening: {HOST}:{PORT} ({'https' if _tls else 'http'})", file=sys.stderr)
 
-    mcp.run(transport="sse")
+    if _tls is None:
+        mcp.run(transport="sse")
+        return
+
+    _run_tls(*_tls)
 
 
 if __name__ == "__main__":
