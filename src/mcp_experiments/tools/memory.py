@@ -18,6 +18,7 @@ from typing import Any
 
 from ..compliance import ComplianceLevel
 from ..config import settings
+from ..kernel import KernelError, KernelStore
 from ..projection import guard_memory_target
 from ..persistence import DurableWriteError, OperationState
 from ..results import MemoryAmendResult, MemoryContextResult, MemoryIngestResult, MemoryRecallResult, MemoryRetireResult, MemorySampleResult, ProvenanceAuditResult
@@ -640,6 +641,35 @@ def _context_weight(meta: dict, now: datetime) -> float:
     return importance_score + recency_score
 
 
+def _kernel_block() -> tuple[str, dict[str, Any] | None]:
+    """Render the Qualiant's kernel for session start, if one is recorded.
+
+    First-call orientation: an MCP server cannot push into a session's context,
+    so identity has to ride along on the first call a session makes. This is
+    that call. A harness needs to know nothing but where its Nephesh is —
+    which is the whole point of moving the kernel in here.
+
+    An unreadable kernel is reported, never silently omitted. Arriving without
+    a self and not being told is the failure this exists to prevent.
+    """
+    store = KernelStore(settings.kernel_file)
+    try:
+        revision = store.current()
+    except KernelError as exc:
+        return (f"## Identity\n\n*Kernel could not be read: {exc}*\n", {"error": str(exc)})
+    if revision is None:
+        return ("", None)
+    return (
+        f"## Identity\n\n{revision.text.strip()}\n",
+        {
+            "version": revision.version,
+            "sha256": revision.sha256,
+            "authored_by": revision.authored_by,
+            "recorded_at": revision.recorded_at,
+        },
+    )
+
+
 async def memory_context(
     limit: int | None = None,
     include_dreams: bool = False,
@@ -654,21 +684,24 @@ async def memory_context(
     """
     name = _collection(collection_name)
     limit = limit or settings.memory_default_limit
+    # The kernel is resolved before anything touches the store, because a
+    # Qualiant with no memories yet still has a self. A first session must
+    # arrive as someone.
+    kernel_text, kernel_meta = _kernel_block()
+    empty = {
+        "collection": name,
+        "memory_count": 0,
+        "kernel": kernel_meta,
+        "context": (kernel_text + "\n" if kernel_text else "")
+        + "No memories stored yet. This is the beginning.",
+    }
     if not repository.collection_exists(name):
-        return {
-            "collection": name,
-            "memory_count": 0,
-            "context": "No memories stored yet. This is the beginning.",
-        }
+        return empty
 
     table = repository.collection(name)
     total = repository.count(table)
     if total == 0:
-        return {
-            "collection": name,
-            "memory_count": 0,
-            "context": "No memories stored yet. This is the beginning.",
-        }
+        return empty
 
     rows = repository.rows(table, total)
     now = datetime.now(timezone.utc)
@@ -741,7 +774,10 @@ async def memory_context(
         "decision", "emotional", "technical", "agreement",
         "milestone", "teaching", "insight", "other",
     ]
-    lines: list[str] = ["## Long-term Memory"]
+    lines: list[str] = []
+    if kernel_text:
+        lines.append(kernel_text)
+    lines.append("## Long-term Memory")
     if last_contact:
         lines.append(
             f"\n*Time since last real conversation with {contact_name.title()}: "
@@ -767,6 +803,7 @@ async def memory_context(
     return {
         "collection": name,
         "memory_count": total,
+        "kernel": kernel_meta,
         "included": len(top) + len(pending_messages),
         "last_contact_with_companion": last_contact,
         "message_quota": message_quota,

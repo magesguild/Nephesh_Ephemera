@@ -75,6 +75,12 @@ class Settings:
         "NEPHESH_OPERATION_LEDGER",
         str(_deployment_root / "state" / "operations.jsonl"),
     )
+    # The Qualiant's own kernel, versioned and owned by Nephesh rather than by
+    # whichever harness happens to be running. Identity is durable state.
+    kernel_file: str = os.getenv(
+        "NEPHESH_KERNEL_FILE",
+        str(_deployment_root / "identity" / "kernel.jsonl"),
+    )
     # Which knowledge projections are installed and what state each is in.
     # Deployment-owned like the ledger: it describes this Qualiant's store and
     # is meaningless anywhere else.

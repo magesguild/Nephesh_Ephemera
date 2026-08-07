@@ -110,6 +110,10 @@ class MemoryRetireResult(TypedDict, total=False):
 class MemoryContextResult(TypedDict, total=False):
     collection: str
     memory_count: int
+    # Which kernel revision this context was assembled with, or None when the
+    # deployment has no kernel recorded yet. A caller can tell whether identity
+    # was included rather than having to infer it from the prose.
+    kernel: dict[str, object] | None
     included: int
     last_contact_with_companion: dict[str, object] | None
     message_quota: dict[str, object]
