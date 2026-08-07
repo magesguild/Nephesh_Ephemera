@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
-from typing import Any, get_type_hints
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -16,41 +17,20 @@ _registered_names: list[str] | None = None
 
 
 def _threaded_tool(fn):
-    """Run async-shaped blocking implementations through FastMCP's threadpool.
+    """Move blocking work inside an async tool to a worker thread.
 
     The implementation modules use ``async def`` around synchronous LanceDB and
-    Ollama calls. FastMCP deliberately does not thread async tools, so the
-    registered wrapper runs the coroutine in its worker thread. Direct Python
-    callers and tests continue to see the original coroutine functions.
+    Ollama calls. Keep the MCP boundary async, then run the complete coroutine
+    in a worker thread so it cannot block the server event loop or call
+    ``asyncio.run`` from inside an existing loop.
     """
     if not inspect.iscoroutinefunction(fn):
         return fn
 
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        return asyncio.run(fn(*args, **kwargs))
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return await asyncio.to_thread(asyncio.run, fn(*args, **kwargs))
 
-    # FastMCP intentionally unwraps decorated callables when deciding whether a
-    # tool is async. Do not expose ``__wrapped__`` here: doing so makes it see
-    # the original coroutine and bypass this thread-dispatch wrapper. Preserve
-    # the public signature and documentation explicitly instead.
-    wrapper.__name__ = fn.__name__
-    wrapper.__qualname__ = fn.__qualname__
-    wrapper.__module__ = fn.__module__
-    wrapper.__doc__ = fn.__doc__
-    try:
-        annotations = get_type_hints(fn)
-        # FastMCP/Pydantic cannot reliably rebuild TypedDict output models
-        # after this callable has been deliberately de-asyncified. The tool
-        # returns remain structured dictionaries; use a stable generic object
-        # schema rather than registering a tool with a warning and no output
-        # schema at all.
-        if "return" in annotations:
-            annotations["return"] = dict[str, Any]
-        wrapper.__annotations__ = annotations
-    except (NameError, TypeError):
-        wrapper.__annotations__ = getattr(fn, "__annotations__", {}).copy()
-    signature = inspect.signature(fn)
-    wrapper.__signature__ = signature.replace(return_annotation=dict[str, Any])
     return wrapper
 
 
