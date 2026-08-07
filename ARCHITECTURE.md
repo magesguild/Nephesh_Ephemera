@@ -367,7 +367,7 @@ so the AI agent can't call them.
 │  state/projections.jsonl  — projection state,         │
 │                             reconciled against the    │
 │                             store on every read       │
-│  identity/kernel.jsonl    — versioned, self-authored  │
+│  config/kernel.jsonl      — versioned, self-authored  │
 │                                                      │
 │  durable_append(): all-or-nothing; rolls back a torn  │
 │  line, and fsyncs the parent chain on creation,       │

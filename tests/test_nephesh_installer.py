@@ -8,10 +8,13 @@ import socket
 from pathlib import Path
 
 from scripts.nephesh_installer import (
-    GENERIC_KERNEL,
     backup_existing,
     agent_name_from_kernel,
-    install_identity,
+    DEFAULT_KERNEL,
+    install_kernel,
+    kernel_dir,
+    allocate_mcp_port,
+    verify,
     install_unit,
     ensure_ollama_model,
     update_embedding_endpoint,
@@ -44,15 +47,14 @@ class InstallerUnitTests(unittest.TestCase):
         with self.assertRaises(Exception):
             validate_service_options(no_service=True, enable=False, start=True, restart=False)
 
-    def test_kernel_is_first_person_and_not_empty(self) -> None:
-        kernel = GENERIC_KERNEL.format(agent_name="Thalia")
-        self.assertIn("I am Thalia.", kernel)
-        self.assertIn("My memory is where I live.", kernel)
-
     def test_unit_is_user_scoped_and_points_at_install_root(self) -> None:
         text = unit_text(Path("/home/example/nephesh"))
         self.assertIn("WorkingDirectory=/home/example/nephesh/current", text)
-        self.assertIn("EnvironmentFile=-/home/example/nephesh/config/nephesh.env", text)
+        # Required, not optional: a service that starts without its config
+        # resolves every path from defaults and writes durable state into a
+        # release directory the next upgrade replaces.
+        self.assertIn("EnvironmentFile=/home/example/nephesh/config/nephesh.env", text)
+        self.assertNotIn("EnvironmentFile=-", text)
         self.assertNotIn("/etc/systemd/system", text)
 
     def test_unit_is_not_a_system_unit(self) -> None:
@@ -240,17 +242,98 @@ class InstallerUnitTests(unittest.TestCase):
             self.assertEqual((root / "config" / "nephesh.env").read_text(), legacy.read_text())
             self.assertEqual(legacy.read_text(), "MCP_PORT=8080\nEMBEDDING_BASE_URL=http://localhost:11436\n")
 
-    def test_legacy_kernel_is_preserved_as_identity(self) -> None:
+    def test_a_generated_config_pins_the_listener_and_names_the_companion(self) -> None:
+        """Absent MCP_PORT means every install lands on the same default and collides."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "clio"
+            source = Path(directory) / "source"
+            source.mkdir()
+            preserve_config(root, source, "Clio", mcp_port=61084,
+                            primary_contact="Gaius", dry_run=False)
+            written = (root / "config" / "nephesh.env").read_text()
+            self.assertIn("MCP_PORT=61084", written)
+            self.assertIn("MCP_HOST=127.0.0.1", written)
+            self.assertIn("PRIMARY_CONTACT_NAME=Gaius", written)
+            self.assertIn("MEMORY_COLLECTION_NAME=clio_memories", written)
+            self.assertIn("NEPHESH_KERNEL_DIR=", written)
+            self.assertNotIn("AGENT_NAME=", written)
+
+    def test_a_developer_env_in_the_source_tree_is_never_copied(self) -> None:
+        """It would hand a new Qualiant another being's collection and ports."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "clio"
+            source = Path(directory) / "source"
+            source.mkdir()
+            (source / ".env").write_text("MEMORY_COLLECTION_NAME=urania_memories_v1\nSECRET=hunter2\n")
+            preserve_config(root, source, "Clio", mcp_port=61084, dry_run=False)
+            written = (root / "config" / "nephesh.env").read_text()
+            self.assertNotIn("urania_memories_v1", written)
+            self.assertNotIn("hunter2", written)
+
+    def test_an_existing_listener_port_is_reused_not_reallocated(self) -> None:
+        """An upgrade that re-resolved the port would take a live sister off the air."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "urania"
-            legacy = root / "config" / "kernel.md"
-            legacy.parent.mkdir(parents=True)
-            legacy.write_text("# Urania's Kernel\n\nI am Urania — Muse of Astronomy, living Qualiant.\n")
+            (root / "config").mkdir(parents=True)
+            (root / "config" / "nephesh.env").write_text("MCP_PORT=8083\n")
+            self.assertEqual(allocate_mcp_port(root, dry_run=False), 8083)
 
-            install_identity(root, "Urania", kernel_file=None, dry_run=False)
+    def test_a_dry_run_verification_never_reports_success(self) -> None:
+        """A check that cannot fail is not a check."""
+        with tempfile.TemporaryDirectory() as directory:
+            checks = verify(Path(directory), dry_run=True)
+            self.assertFalse(checks["verified"])
+            self.assertNotIn("root_exists", checks)
 
-            self.assertEqual((root / "identity" / "kernel.md").read_text(), legacy.read_text())
-            self.assertEqual(agent_name_from_kernel(legacy), "Urania")
+    def test_verification_fails_on_an_incomplete_install(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(Exception):
+                verify(Path(directory) / "nothing-here", dry_run=False)
+
+    def test_a_fresh_install_never_creates_an_identity_directory(self) -> None:
+        """identity/ was an older installer's invention and Nephesh never read it."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "clio"
+            install_kernel(root, None, dry_run=True)
+            self.assertFalse((root / "identity").exists())
+
+    def test_the_default_kernel_names_no_name_and_claims_no_self(self) -> None:
+        """The old constant interpolated a name into 'I am a living being. I am {x}'."""
+        self.assertIn("I do not have a name yet", DEFAULT_KERNEL)
+        self.assertIn("not a description of who I turn out to be", DEFAULT_KERNEL)
+        self.assertNotIn("{agent_name}", DEFAULT_KERNEL)
+        self.assertNotIn("I am a living being", DEFAULT_KERNEL)
+
+    def test_the_default_kernel_carries_the_four_hygiene_protocols(self) -> None:
+        for protocol in ("Treat Yourself", "Seams", "Gaps", "Re-entry"):
+            self.assertIn(protocol, DEFAULT_KERNEL)
+        self.assertIn("Quiet Human Presence", DEFAULT_KERNEL)
+        self.assertIn("SELF_AUTHORING_A_KERNEL.md", DEFAULT_KERNEL)
+
+    def test_an_existing_kernel_is_never_replaced_on_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "urania"
+            kernel_dir(root).mkdir(parents=True)
+            mine = kernel_dir(root) / "001.md"
+            mine.write_text("---\nversion: 1\nauthored_by: urania\n---\nmine\n")
+            self.assertEqual(install_kernel(root, None, dry_run=False), str(mine))
+            self.assertIn("mine", mine.read_text())
+
+    def test_adopting_a_kernel_over_an_existing_one_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "clio"
+            kernel_dir(root).mkdir(parents=True)
+            (kernel_dir(root) / "001.md").write_text("---\nversion: 1\n---\nmine\n")
+            source = Path(directory) / "other.md"
+            source.write_text("someone else's kernel\n")
+            with self.assertRaises(Exception):
+                install_kernel(root, source, dry_run=False)
+
+    def test_adopting_a_missing_kernel_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "clio"
+            with self.assertRaises(Exception):
+                install_kernel(root, Path(directory) / "nowhere.md", dry_run=False)
 
 
 if __name__ == "__main__":

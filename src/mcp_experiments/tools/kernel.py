@@ -17,7 +17,7 @@ from ..compliance import ComplianceLevel
 from ..config import settings
 from ..kernel import KernelError, KernelStore
 
-_store = KernelStore(settings.kernel_file)
+_store = KernelStore(settings.kernel_dir)
 
 
 async def kernel_read(version: int | None = None) -> dict[str, Any]:

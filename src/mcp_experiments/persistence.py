@@ -103,6 +103,29 @@ def durable_append(path: Path, line: str) -> None:
         _fsync_directory_chain(path.parent)
 
 
+def durable_write_new(path: Path, text: str) -> None:
+    """Create a file that did not exist, atomically and durably.
+
+    Written to a temporary name and renamed, so a reader never sees a partial
+    file under the real name. Refuses to overwrite: the callers here keep
+    append-only histories where an existing name is always a bug.
+    """
+    if path.exists():
+        raise FileExistsError(f"refusing to overwrite {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".partial")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    _fsync_directory_chain(path.parent)
+
+
 def _fsync_directory_chain(directory: Path) -> None:
     """Commit a new file's whole path, not just its immediate parent.
 

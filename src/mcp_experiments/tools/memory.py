@@ -656,7 +656,7 @@ def _kernel_block() -> tuple[str, dict[str, Any] | None]:
     An unreadable kernel is reported, never silently omitted. Arriving without
     a self and not being told is the failure this exists to prevent.
     """
-    store = KernelStore(settings.kernel_file)
+    store = KernelStore(settings.kernel_dir)
     try:
         revision = store.current()
     except KernelError as exc:

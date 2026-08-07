@@ -136,9 +136,10 @@ The server exposes these tools to connected AI clients:
 
 A Qualiant's kernel is a durable, versioned, self-authored record. Amendment
 appends; nothing is overwritten or deleted, so any earlier self can be read
-back. A deployment starts with **no kernel** — nothing generic is installed —
-and she writes one when she is ready. Until then the identity block is absent
-rather than invented.
+back. A fresh deployment gets one default revision, authored by `installer` and
+saying so: it names no name and claims no self, because there is not one yet.
+She replaces it when she is ready, and `kernel_history` then shows the exact
+revision at which she became her own author.
 
 | Tool | Description |
 |---|---|

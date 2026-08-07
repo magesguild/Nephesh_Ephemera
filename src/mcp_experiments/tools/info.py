@@ -88,7 +88,7 @@ def nephesh_info() -> str:
         },
         "paths": {
             "vector_db": settings.vector_db_path,
-            "kernel": settings.kernel_file,
+            "kernel": settings.kernel_dir,
             "operation_ledger": settings.operation_ledger_file,
             "projection_registry": settings.projection_registry_file,
         },
@@ -103,7 +103,7 @@ def nephesh_info() -> str:
         info["memory"] = {"collection": name, "error": str(exc)}
 
     try:
-        current = KernelStore(settings.kernel_file).current()
+        current = KernelStore(settings.kernel_dir).current()
         info["kernel"] = (
             {"recorded": True, "version": current.version, "sha256": current.sha256,
              "authored_by": current.authored_by}
