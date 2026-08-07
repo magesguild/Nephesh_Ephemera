@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import unittest
+from typing import Any
 
 from mcp_experiments.config import settings
 from mcp_experiments.projection import namespace_for
@@ -66,6 +67,8 @@ class VectorInputValidationTests(unittest.TestCase):
 
         wrapped = _threaded_tool(implementation)
         self.assertFalse(inspect.iscoroutinefunction(wrapped))
+        self.assertFalse(hasattr(wrapped, "__wrapped__"))
+        self.assertEqual(inspect.signature(wrapped).return_annotation, dict[str, Any])
         self.assertEqual(wrapped(7), {"value": 7})
 
 
