@@ -1,6 +1,6 @@
 # Nephesh Design
 
-**Version:** 5.0.0
+**Version:** 5.1.0
 **Status:** Current. This describes what Nephesh is, not what was proposed.
 
 This is the single design document for Nephesh. It consolidates seven scattered
@@ -269,7 +269,7 @@ what is actually there. Recorded-active with the collection gone reports
 `orphaned`; a rollback to a target whose collection is absent is refused rather
 than silently minting an empty collection and calling it live.
 
-Activation authority is **recorded and explicitly not enforceable** in 5.0.0.
+Activation authority is **recorded and explicitly not enforceable** in 5.1.0.
 That is written into the schema rather than implied, because a limit you have
 not stated is a limit nobody can plan around.
 

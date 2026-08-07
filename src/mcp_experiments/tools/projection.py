@@ -74,7 +74,7 @@ async def projection_stage(
 async def projection_activate(namespace: str, activated_by: str) -> dict[str, Any]:
     """Make a staged projection available to retrieval.
 
-    `activated_by` is recorded and not enforced in 5.0.0.
+    `activated_by` is recorded and not enforced in 5.1.0.
     """
     try:
         return activate(namespace, registry=_registry, store=repository, activated_by=activated_by)
