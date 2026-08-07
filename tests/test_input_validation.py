@@ -5,7 +5,7 @@ import unittest
 
 from mcp_experiments.config import settings
 from mcp_experiments.projection import namespace_for
-from mcp_experiments.tools import vector_db
+from mcp_experiments.tools import memory, vector_db
 
 
 class VectorInputValidationTests(unittest.TestCase):
@@ -41,6 +41,11 @@ class VectorInputValidationTests(unittest.TestCase):
     def test_stress_test_rejects_empty_query_set(self) -> None:
         result = asyncio.run(vector_db.stress_test("scratch", n_queries=0))
         self.assertIn("greater than zero", result["error"])
+
+    def test_malformed_metadata_is_reported_without_breaking_reads(self) -> None:
+        result = memory._metadata({"id": "broken", "metadata_json": "not-json"})
+        self.assertEqual(result["_metadata_row_id"], "broken")
+        self.assertIn("not valid JSON", result["_metadata_error"])
 
 
 if __name__ == "__main__":

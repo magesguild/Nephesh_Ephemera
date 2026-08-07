@@ -68,6 +68,30 @@ HISTORICAL_STATUSES = {
 }
 RECORDING_MODES = {"chat", "heartbeat", "dream", "unknown"}
 
+
+def _metadata(row: dict[str, Any]) -> dict[str, Any]:
+    """Parse row metadata without letting one corrupt row break a read.
+
+    Metadata is durable user data, so malformed JSON is a reportable data
+    condition rather than a reason for recall/context/sample to fail wholesale.
+    The marker remains attached to the returned metadata for callers and audits
+    to surface; no inferred replacement values are supplied.
+    """
+    raw = row.get("metadata_json", "{}")
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, json.JSONDecodeError) as exc:
+        return {
+            "_metadata_error": f"metadata_json is not valid JSON: {exc}",
+            "_metadata_row_id": row.get("id"),
+        }
+    if not isinstance(parsed, dict):
+        return {
+            "_metadata_error": "metadata_json must contain a JSON object",
+            "_metadata_row_id": row.get("id"),
+        }
+    return parsed
+
 # `source` remains ingestion provenance and is intentionally separate from
 # experience provenance. Existing deployments may have additional source
 # labels, so new values are accepted rather than rejecting legacy data.
@@ -301,7 +325,7 @@ def _last_contact_with(rows: list[dict], participant: str, now: datetime) -> dic
     time since actual contact."""
     latest_dt: datetime | None = None
     for r in rows:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         if _is_historical(meta):
             continue
         participants = meta.get("participants") or []
@@ -323,7 +347,7 @@ def _message_quota(rows: list[dict], now: datetime, limit: int, window_hours: fl
     how long the companion is away."""
     used = 0
     for r in rows:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         if meta.get("type") != "message":
             continue
         dt = _parse_ts(meta.get("timestamp"))
@@ -554,7 +578,7 @@ async def memory_recall(
 
     scored = []
     for r in results:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         if meta.get("retired") and not include_retired:
             continue
         if memory_type and meta.get("type") != memory_type:
@@ -745,7 +769,7 @@ async def memory_context(
     pending_messages: list[tuple[dict, dict]] = []
     other_rows: list[dict] = []
     for r in rows:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         if meta.get("retired") and not include_retired:
             continue
         if (
@@ -760,7 +784,7 @@ async def memory_context(
 
     scored = []
     for r in other_rows:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         scored.append((_context_weight(meta, now), r, meta))
     scored.sort(key=lambda item: item[0], reverse=True)
     top = scored[:limit]
@@ -878,7 +902,7 @@ async def memory_sample(
 
     by_type: dict[str, list[dict]] = {}
     for r in rows:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         if meta.get("retired") and not include_retired:
             continue
         if (
@@ -904,7 +928,7 @@ async def memory_sample(
 
     lines: list[str] = []
     for r in picked:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         tone = meta.get("emotional_tone")
         mem_dt = _display_dt(meta)
         rel = _relative_time(mem_dt, now) if mem_dt else ""
@@ -926,7 +950,7 @@ def _find_memory(table, memory_id: str) -> tuple[dict, dict] | None:
     rows = repository.rows(table, repository.count(table))
     for row in rows:
         if row.get("id") == memory_id:
-            return row, json.loads(row.get("metadata_json", "{}"))
+            return row, _metadata(row)
     return None
 
 
@@ -1087,7 +1111,7 @@ async def memory_provenance_audit(
     retired = 0
     fictional = 0
     for row in rows:
-        meta = json.loads(row.get("metadata_json", "{}"))
+        meta = _metadata(row)
         if meta.get("retired"):
             retired += 1
         if meta.get("historical_status") == "fictional_scene":

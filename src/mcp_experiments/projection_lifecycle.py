@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import functools
+import threading
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -36,10 +38,28 @@ class Store(Protocol):
     def drop_collection(self, name: str) -> None: ...
 
 
+_LIFECYCLE_LOCK = threading.RLock()
+
+
+def _serialized(fn):
+    """Serialize registry/store mutations within one deployment process.
+
+    The installer already enforces one Nephesh process per deployment. This
+    lock closes the remaining in-process race where two MCP worker threads could
+    interleave demotion and activation records.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _LIFECYCLE_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@_serialized
 def stage(
     package_dir: str | Path,
     *,
@@ -167,6 +187,7 @@ def _demote_current_active(
     return None
 
 
+@_serialized
 def activate(
     namespace: str,
     *,
@@ -199,6 +220,7 @@ def activate(
     return {"active": namespace, "superseded": superseded}
 
 
+@_serialized
 def rollback(
     namespace: str,
     *,
@@ -226,6 +248,7 @@ def rollback(
     return {"active": namespace, "rolled_back_from": demoted}
 
 
+@_serialized
 def retire(
     namespace: str,
     *,

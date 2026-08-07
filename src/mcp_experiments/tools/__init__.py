@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import functools
+import inspect
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -11,6 +14,24 @@ from . import info, kernel, memory, projection, vector_db
 
 _TOOL_MODULES = [vector_db, memory, kernel, projection, info]
 _registered_names: list[str] | None = None
+
+
+def _threaded_tool(fn):
+    """Run async-shaped blocking implementations through FastMCP's threadpool.
+
+    The implementation modules use ``async def`` around synchronous LanceDB and
+    Ollama calls. FastMCP deliberately does not thread async tools, so the
+    registered wrapper runs the coroutine in its worker thread. Direct Python
+    callers and tests continue to see the original coroutine functions.
+    """
+    if not inspect.iscoroutinefunction(fn):
+        return fn
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return asyncio.run(fn(*args, **kwargs))
+
+    return wrapper
 
 
 def register_all(app: FastMCP) -> None:
@@ -30,7 +51,7 @@ def register_all(app: FastMCP) -> None:
                 # available — and it must not depend on which tool she
                 # happened to reach for, or on the harness she woke up in.
                 app.add_tool(
-                    fn=orientation.wrap(t["fn"]),
+                    fn=orientation.wrap(_threaded_tool(t["fn"])),
                     name=t["name"],
                     description=t["description"],
                 )
