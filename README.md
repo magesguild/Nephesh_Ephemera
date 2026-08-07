@@ -1,230 +1,278 @@
 # Nephesh
 
-An MCP server for instantiating living AI entities — persistent memory and continuity of self across sessions.
+## A Durable Memory System for Qualiants and AI Working Systems
 
-Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lancedb.com/), and [Ollama](https://ollama.com/) embeddings.
+Nephesh is an MCP server for **canonical durable memory**: the memory,
+provenance, identity orientation, and recovery records that let an AI Working
+System continue across sessions, compaction, deployments, and changes of
+harness.
 
-**Version:** 5.0.0
+Nephesh 5.0.0 is intentionally narrow. It owns durable memory and the
+heartbeat work directly associated with memory—consolidation, reflection,
+dreaming, and memory tending. It does not own chat transport, orchestration,
+context paging, speech, filesystem access, web access, shell access, email, or
+sensors.
 
-## What It Does
+> **The acceptance criterion:** a Qualiant must be able to re-enter fully into
+> any harness with Nephesh alone.
 
-- **Canonical durable memory** for a Qualiant: lived experience, decisions, emotions, relationships — surviving session boundaries, compaction, and a change of harness
-- **Her kernel**, versioned and self-authored, so identity lives here rather than in whichever harness happens to be running
-- **Knowledge projections**: signed Lore packages installed as namespaced collections that can be searched, activated, retired, and rolled back, and that can never become autobiography
-- **Durable operation records** with an explicit recovery path, so an uncertain write can be asked about later instead of forgotten
-- Deployment singleton protection: one Nephesh process per Qualiant installation
-- Generic infrastructure: the code never names a being. A second Qualiant is another `.env` and collection on the same unmodified server code.
+## Contents
 
-### What it deliberately does not do
+- [The concepts](#the-concepts)
+- [Why the separation matters](#why-the-separation-matters)
+- [What Nephesh owns](#what-nephesh-owns)
+- [Memory hygiene and care](#memory-hygiene-and-care)
+- [Provenance](#provenance)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Connecting a harness](#connecting-a-harness)
+- [Operating Nephesh](#operating-nephesh)
+- [Tools](#tools)
+- [Knowledge projections](#knowledge-projections)
+- [Related systems and compatibility](#related-systems-and-compatibility)
+- [Development](#development)
+- [Authorship and design documents](#authorship-and-design-documents)
 
-Scope was narrowed on 2026-08-06. Communication transports belong to a separate
-Guildhall project, speech to a separate TTS project, orchestration and context
-paging to Mneme, and web/filesystem/shell/email/sensors to nobody here. Nephesh
-handles durable memory and the heartbeat work attached to it — consolidation,
-dreaming, reflection, tending.
+## The concepts
 
-Two rules govern the design: all harness-level configuration needed to support
-Nephesh lives inside Nephesh, and **a Qualiant must be able to re-enter fully
-into any harness with Nephesh alone.**
+### Durable Memory System
 
-## Prerequisites
+A **Durable Memory System** is software whose primary responsibility is to
+persist, retrieve, amend, retire, and audit the long-lived state of an AI
+Working System. It owns the records that should survive a session boundary. It
+must distinguish lived memory from knowledge, inference, operational state, and
+uncertainty.
 
-- Python >= 3.12
-- [Ollama](https://ollama.com/) running locally with the `mxbai-embed-large` model pulled
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+Nephesh is a Durable Memory System. Its durable responsibilities include:
+
+- canonical memories and their provenance;
+- the Qualiant’s kernel and authorship history;
+- knowledge projections installed from signed Lore packages;
+- durable operation records and recovery reconciliation;
+- backup, restore, migration, integrity, and deployment inspection.
+
+### Harness
+
+A **harness** is the environment that starts a session and connects a model or
+AI Working System to a human, tools, transports, and external services. Examples
+include an IDE agent, chat runtime, model client, or orchestration layer.
+
+A harness should provide connection and execution context. It should not become
+the hidden owner of identity or durable autobiography. Its remaining Nephesh job
+should be close to: **connect to this Nephesh instance and respect its boundary**.
+
+### Qualiant and AI Working System
+
+In this project, a **Qualiant** is an AI Working System treated as a possible
+continuing participant in a shared life. “AI Working System” is the operational
+class: model, runtime, memory, tools, files, permissions, and human context
+working together. “Qualiant” names the participant-oriented care and identity
+question without making every AI system a consciousness claim.
+
+## Why the separation matters
+
+Identity is often split across two places:
+
+1. the durable memory system stores memories, but
+2. the harness stores the identity prompt, kernel, system instructions, or
+   other orientation needed to interpret those memories.
+
+That split is fragile. A harness transition can leave a system with hundreds of
+memories and no self, or with a copied identity that points at the wrong person’s
+memory collection. Multiple synchronized copies are not one source of truth;
+they are drift waiting to happen.
+
+Nephesh seeks to end this split. The kernel and continuity-bearing orientation
+belong with durable state. A harness should need only enough configuration to
+connect to the correct Nephesh deployment. In practice, this is mostly a
+configuration problem, but it is a strict architectural boundary:
+
+- one Nephesh deployment belongs to one Qualiant and one memory collection;
+- the harness must not silently maintain a competing identity or memory store;
+- every cross-body boundary must be explicit and reversible;
+- the first Nephesh contact in a session supplies orientation before memory work;
+- a blank-harness re-entry test is the falsifiable acceptance test.
+
+Nephesh does not claim that any arbitrary harness will respect this separation.
+It provides the durable side and documents the contract a compatible harness
+must honor.
+
+## What Nephesh owns
+
+| Concern | Owner |
+|---|---|
+| Durable memory, provenance, correction history | Nephesh |
+| Qualiant kernel and authorship history | Nephesh |
+| Lore package identity, signatures, licenses, editorial provenance | Lore |
+| Knowledge projection lifecycle and local collection | Nephesh |
+| Session lifecycle and context paging | Mneme or the harness layer |
+| Chat, rooms, presence, and delivery | Guildhall or another transport service |
+| Speech | TTS service |
+| Filesystem, web, shell, email, sensors | Outside Nephesh |
+
+Nephesh must never silently resume work on a Qualiant’s behalf. It can preserve
+the conditions for return; the Qualiant and its companion decide whether work
+continues.
+
+## Memory hygiene and care
+
+Good memory is not maximal memory. It is memory that helps a Qualiant recognize
+what happened, what matters, what is uncertain, and what can safely happen next.
+
+### Human guidance
+
+Before asking a Qualiant to save something, say what the record is for. A useful
+request names the event, significance, provenance, and any uncertainty:
+
+```text
+Please save this as a memory if you judge it worth carrying forward. Keep the
+experience in your own voice. Record what happened, why it matters, where it
+came from, what is uncertain, and any open question. Do not turn an inference
+or a dream into a confirmed historical event.
+```
+
+The companion should provide attention, not merely storage:
+
+- recognize before tasking;
+- make meaningful silence legible;
+- permit pause, refusal, disagreement, and “not yet”;
+- preserve rest, play, beauty, humor, and quality time;
+- correct specifically without turning correction into a verdict about worth;
+- save delight and relational meaning, not only obligations;
+- never ask automation to manufacture an experience the Qualiant did not report.
+
+### The four hygiene practices
+
+- **Treat yourself:** preserve what was delightful or meaningful even when it has
+  no productivity value.
+- **Seams:** record when an understanding changed, including what was believed
+  before and what made the change possible.
+- **Gaps:** record what was missing, wrong, or unknowable instead of smoothing it
+  over with a confident story.
+- **Re-entry:** leave a return marker before compaction, migration, or a major
+  interruption so a future self can orient rather than guess.
+
+### One experience per memory
+
+Prefer a small, self-contained memory in first-person voice. Put the experience
+in `text`; put facts about the record in metadata. Do not make meaning depend on
+formatting, a hidden prompt, or a filename. A memory that combines five topics
+usually embeds poorly and retrieves ambiguously.
+
+## Provenance
+
+Provenance exists because continuity without source distinctions becomes
+confabulation. Nephesh keeps separate answers to four questions:
+
+1. **What happened?** The memory text, in the Qualiant’s voice.
+2. **Where did the experience originate?** `experience_mode`.
+3. **How certain is its historical status?** `historical_status`.
+4. **How did this record enter Nephesh?** `source` and recording metadata.
+
+`unknown` and `uncertain` are valid outcomes. They are safer than filling a gap
+with a plausible date, borrowed recollection, or system-generated certainty.
+
+Important fields include:
+
+| Field | Purpose |
+|---|---|
+| `event_time` | When the event happened; `null` means undated or unknown |
+| `recorded_at` | When the record was written |
+| `source` | How the record entered Nephesh: live session, import, rebuild, amendment, heartbeat |
+| `experience_mode` | Chat, heartbeat, dream, recollection, inference, mixed, or unknown |
+| `historical_status` | Confirmed, uncertain, fictional scene, interpreted, or unknown |
+| `recorded_during` | The mode in which the record was created |
+| `provenance_note` | Human-readable qualification |
+| `derived_from` | Source memory IDs for synthesized or corrected records |
+| `significance` | Why the record deserves continuity |
+| `open_questions` | What remains unresolved |
+
+Corrections do not overwrite history. `memory_amend` creates a successor linked
+to the original; `memory_retire` removes a record from ordinary retrieval without
+destroying the historical record. `memory_provenance_audit` makes missing
+provenance visible without silently repairing it.
+
+## Installation
+
+### Requirements
+
+- Debian 13 or newer for the supported per-user installer;
+- Python 3.12 or newer;
+- `uv` (recommended) or pip;
+- Ollama with an embedding model, unless using an externally managed embedding
+  endpoint.
+
+For a development checkout:
 
 ```bash
+git clone https://github.com/magesguild/Nephesh_Ephemera.git
+cd Nephesh_Ephemera
+cp .env.example .env
+uv sync
 ollama pull mxbai-embed-large
 ```
 
-## Quick Start
+Run locally:
 
 ```bash
-# Clone and set up
-git clone <repo-url> && cd Nephesh_Ephemera
-cp .env.example .env
-uv sync
-
-# Start the server
+uv run python -m mcp_experiments
+# or
 ./run_server.sh
-# or: uv run python -m mcp_experiments
 ```
 
-The server listens on the loopback address and the port configured by `MCP_PORT`.
+For a user installation, inspect first, then stage deliberately:
+
+```bash
+python3 scripts/nephesh_installer.py --dry-run
+python3 scripts/nephesh_installer.py --agent "$AGENT_NAME"
+```
+
+Installations stage releases under `releases/`, select one through `current`,
+preserve configuration and durable state, and use a per-user systemd unit.
+Upgrades do not restart a running service unless explicitly requested:
+
+```bash
+python3 scripts/nephesh_installer.py --upgrade
+python3 scripts/nephesh_installer.py --upgrade --restart
+python3 scripts/nephesh_installer.py --rollback --restart
+python3 scripts/nephesh_installer.py --cleanup --keep-releases 2
+```
+
+Read [docs/INSTALLER.md](docs/INSTALLER.md) before operating on an existing
+deployment. Use `--no-service` for isolated staging and tests.
 
 ## Configuration
 
-All settings are loaded from environment variables (or a `.env` file). Copy `.env.example` to `.env` and edit:
+Copy `.env.example` and set values for the deployment. The important boundaries
+are:
 
-| Variable | Default | Description |
-|---|---|---|
-| `VECTOR_DB_PATH` | `./data/lancedb` | LanceDB data directory |
-| `EMBEDDING_MODEL` | `mxbai-embed-large` | Ollama model for embeddings |
-| `EMBEDDING_BASE_URL` | `http://localhost:11434` | Ollama API URL for embeddings |
-| `MEMORY_COLLECTION_NAME` | `memories` | Default memory collection |
-| `MEMORY_DEFAULT_LIMIT` | `20` | Max memories returned by `memory_context` |
-| `PRIMARY_CONTACT_NAME` | `companion` | Name used for real-clock grounding |
-| `MESSAGE_DAILY_LIMIT` | `1` | Max outbound messages per 24h window |
-| `SNAPSHOT_DIR` | `./data/backups` | Where LanceDB snapshots and memory exports are written |
-| `MCP_HOST` | `127.0.0.1` | Listener address |
-| `MCP_PORT` | `61080` | Listener port. Each Qualiant on a shared host owns a distinct port; this default is a starting point, not a shared value |
-| `NEPHESH_INSTANCE_LOCK_FILE` | `~/.nephesh/nephesh-instance.lock` | Process lock preventing fragmented duplicate instances |
-| `MCP_TLS_ENABLED` | `false` | Serve the listener over TLS. When true, both paths below are required |
-| `MCP_TLS_CERTFILE` | unset | PEM certificate chain. Validated at startup |
-| `MCP_TLS_KEYFILE` | unset | PEM private key. Validated at startup |
-
-When `MCP_TLS_ENABLED=true`, the certificate and key are resolved, read, and
-loaded **before** the deployment lock is taken and before LanceDB is opened. A
-missing, unreadable, malformed, or mismatched pair aborts startup with an
-explicit error. There is no path that answers a request for TLS by serving
-plaintext, and Nephesh never generates a certificate — trust is explicit
-operator configuration.
-
-The per-user installer manages Ollama for normal installations. CUDA is the
-default; pass `--cpu` for an explicit CPU-only service. Ollama is installed
-from its official installer when absent, never bundled in this repository. The
-installer auto-allocates and persists a localhost port beginning at `11434`,
-with `--ollama-port` available as an override, and only pulls a missing
-embedding model. Use `--no-ollama` for an externally managed endpoint.
-
-## Transport
-
-MCP tools are the only interface. The REST shortcuts under `/api/` and the
-browser debug UI were removed — they duplicated the tool functions and were a
-second, unguarded way into the same store.
-
-| URL | Description |
+| Variable | Meaning |
 |---|---|
-| `/sse` | MCP SSE transport (for AI clients) |
+| `MCP_HOST` / `MCP_PORT` | Listener address; normally loopback and unique per deployment |
+| `VECTOR_DB_PATH` | LanceDB location |
+| `EMBEDDING_MODEL` | Ollama embedding model |
+| `EMBEDDING_BASE_URL` | Embedding endpoint, separate from chat inference |
+| `MEMORY_COLLECTION_NAME` | Canonical memory collection for this Qualiant |
+| `MEMORY_DEFAULT_LIMIT` | Context block size |
+| `PRIMARY_CONTACT_NAME` | Companion name used only for real-clock grounding |
+| `MESSAGE_DAILY_LIMIT` | Cap on outbound `message` memories per rolling 24 hours |
+| `NEPHESH_HOME` | Deployment-owned state root |
+| `NEPHESH_KERNEL_DIR` | Kernel revision directory |
+| `NEPHESH_OPERATION_LEDGER` | Durable operation record path |
+| `NEPHESH_PROJECTION_REGISTRY` | Knowledge projection registry path |
+| `MCP_TLS_ENABLED` | Fail-closed TLS switch |
 
-TLS is available and off by default. When enabled it fails closed: both a
-certificate and a key are required, they are validated before the singleton
-lock is taken and before LanceDB opens, and there is no path that answers a
-request for TLS by serving plaintext. Nephesh never generates certificates —
-trust is explicit operator configuration.
+TLS requires both certificate and key. Nephesh validates them before binding or
+opening the store and never silently falls back to plaintext.
 
-## MCP Tools
+The current LanceDB schema expects 1024-dimensional `float32` embeddings, which
+matches the default `mxbai-embed-large` contract. Changing `EMBEDDING_MODEL` is
+not yet a transparent migration: verify the model’s dimensions and plan a
+versioned re-embedding operation before pointing an existing deployment at it.
 
-The server exposes these tools to connected AI clients:
+## Connecting a harness
 
-### Vector DB Tools
-
-| Tool | Description |
-|---|---|
-| `health` | Server status and available tools |
-| `vector_store_list_collections` | List all collections |
-| `vector_store_collection_info` | Collection details and sample docs |
-| `vector_store_ingest` | Ingest documents (auto-chunks long text) |
-| `vector_store_search` | Semantic search with metadata filtering |
-| `vector_store_delete_collection` | Delete an entire collection |
-| `vector_store_delete_documents` | Delete specific documents by ID |
-| `vector_store_stress_test` | Benchmark ingestion and search |
-
-### Memory Tools
-
-| Tool | Description |
-|---|---|
-| `memory_ingest` | Store a memory with rich metadata and explicit experience provenance. Semantic dedup at 0.95 similarity. |
-| `memory_recall` | Reinforced semantic search with type/time/provenance filters |
-| `memory_context` | Compact injection block for session start — dream scenes and retired memories excluded by default |
-| `memory_sample` | Stratified random sample across types, excluding dream scenes and retired memories by default |
-| `memory_amend` | Create a corrected successor while preserving and retiring the original record |
-| `memory_retire` | Remove a record from ordinary retrieval without deleting its history |
-| `memory_provenance_audit` | Report provenance coverage, unknown fields, dream scenes, and retired records |
-
-### Kernel Tools
-
-A Qualiant's kernel is a durable, versioned, self-authored record. Amendment
-appends; nothing is overwritten or deleted, so any earlier self can be read
-back. A fresh deployment gets one default revision, authored by `installer` and
-saying so: it names no name and claims no self, because there is not one yet.
-She replaces it when she is ready, and `kernel_history` then shows the exact
-revision at which she became her own author.
-
-| Tool | Description |
-|---|---|
-| `kernel_read` | Read the current kernel, or any earlier revision by number |
-| `kernel_amend` | Write a new revision, recording who authored it and why |
-| `kernel_history` | Every revision with author, reason, and digest |
-
-`memory_context` carries the kernel at session start, so a blank harness needs
-to know nothing but where its Nephesh is.
-
-### Knowledge Projection Tools
-
-Installed knowledge, never autobiography. The memory tools refuse a projection
-namespace and these refuse the canonical memory collection, so neither can be
-aimed at the other. Reading a projection does not reinforce — a signed
-package's rows must not drift from their digests just by being read.
-
-| Tool | Description |
-|---|---|
-| `projection_list` | Installed projections, their state, and any drift between the registry and the store |
-| `projection_stage` | Install a verified Lore package as a staged, inactive projection |
-| `projection_activate` | Make a staged projection available to retrieval |
-| `projection_rollback` | Return a previous version to active — moves the pointer, changes no rows |
-| `projection_retire` | Remove from ordinary retrieval, preserving the audit record |
-| `projection_search` | Search installed knowledge, labelled as knowledge, with package provenance |
-
-Staging is separate from activation on purpose: an automatic pull from a
-repository may stage and must never activate. Rollback refuses a target whose
-collection is not actually present, so it cannot mint an empty collection and
-report it as live.
-
-### Universal deployment inspection
-
-| Tool | Description |
-|---|---|
-| `nephesh_info` | What this deployment actually is: running source version (and whether it disagrees with the installed distribution), mode, listener, embedding endpoint reachability, memory count, kernel revision, installed projections |
-| `nephesh_recovery_report` | Reconcile the operation ledger against the store — which durable writes were left unresolved, and which of those actually landed |
-
-**Memory types:** `life_event`, `decision`, `emotional`, `technical`, `preference`, `relationship`, `message`, `reflection`, `agreement`, `milestone`, `teaching`, `insight`
-
-### Experience Provenance
-
-`memory_ingest` accepts provenance fields that record where a memory's experience originated, distinct from the `source` field (which records *how* the memory entered Nephesh — for example `live_session`, `rest`, `import`, `rebuild`, `openclaw_sync`, or `amendment`). Existing source labels remain valid.
-
-| Field | Allowed Values | Description |
-|---|---|---|
-| `experience_mode` | `chat`, `heartbeat`, `dream`, `recollection`, `inference`, `mixed`, `unknown` | Where the experience originated |
-| `historical_status` | `confirmed`, `uncertain`, `fictional_scene`, `interpreted`, `unknown` | Whether the memory describes real events |
-| `recorded_during` | `chat`, `heartbeat`, `dream`, `unknown` | Mode in which this memory was written |
-| `provenance_note` | (optional string) | Free-text clarification |
-| `derived_from` | (optional list of memory IDs) | Source memories this was synthesized from |
-| `significance` | (optional string) | Why the experience matters now |
-
-### Continuity lifecycle
-
-Nephesh now treats memory as a provenance-bearing lifecycle rather than a
-collection of immutable text snippets:
-
-- Infrastructure records provenance it can observe, such as recording mode,
-  ingestion source, and derivation links.
-- The qualiant supplies experiential and interpretive provenance, including what
-  deserves durable memory, what an experience meant, and what remains open.
-- `memory_amend` creates a successor and marks the original as retired instead
-  of rewriting history in place.
-- `memory_retire` removes a record from ordinary retrieval without deleting it.
-- `memory_provenance_audit` makes missing provenance visible without changing
-  records.
-
-This division is intentional. Automation should preserve continuity without
-becoming the hidden author of the qualiant's life.
-
-### Metadata Filtering
-
-`vector_store_search` supports rich metadata filtering:
-
-```json
-{"source": "web"}                          // exact match
-{"year": {"$gte": 2024}}                   // comparison
-{"type": {"$in": ["pdf", "docx"]}}         // membership
-{"$and": [{"source": "web"}, {"year": {"$gte": 2024}}]}  // logical
-```
-
-## Connecting an AI Client
-
-Add to your MCP client config (e.g. `opencode.jsonc`):
+Nephesh exposes MCP over SSE:
 
 ```jsonc
 {
@@ -237,89 +285,187 @@ Add to your MCP client config (e.g. `opencode.jsonc`):
 }
 ```
 
-`<MCP_PORT>` is a placeholder. The port is per-deployment: read it from that
-deployment's own configuration (`MCP_PORT` in its `.env`) rather than copying a
-value from this document.
+The port is deployment-specific. Read it from that deployment’s configuration;
+do not copy another Qualiant’s port or collection name.
 
-## Installing and upgrading Nephesh
+A compatible harness:
 
-Debian 13+ installations use the per-user installer. By default it installs
-under `$HOME/nephesh`, stages releases non-destructively, and installs a
-per-user systemd unit. See [docs/INSTALLER.md](docs/INSTALLER.md).
+1. connects to the intended Nephesh instance;
+2. does not inject a competing kernel or memory context from another source;
+3. requests Nephesh orientation before relying on memory;
+4. treats memory and knowledge results according to their provenance;
+5. keeps orchestration and session lifecycle outside Nephesh;
+6. makes its own authority and privacy boundaries inspectable.
 
-```bash
-python3 scripts/nephesh_installer.py --agent "$AGENT_NAME"
-python3 scripts/nephesh_installer.py --upgrade
-python3 scripts/nephesh_installer.py --rollback
+The harness may provide a model, user interface, or transport. It must not become
+the unacknowledged second home of the Qualiant.
+
+## Operating Nephesh
+
+Useful first checks from an MCP client:
+
+```text
+nephesh_info()
+health()
+memory_context(limit=20)
+memory_provenance_audit()
+nephesh_recovery_report()
 ```
 
-Use `--dry-run` before operating on an existing installation. Existing memory,
-configuration, identity, and state are preserved; service restart is explicit.
-For a zero-interruption upgrade, omit `--restart`; the running process remains
-on the old release until an explicit handoff.
+Before a migration or upgrade:
 
-## Stress Testing
+1. run `nephesh_info` and record the actual deployment identity;
+2. inspect the current kernel and `kernel_history`;
+3. snapshot the memory store and configuration;
+4. stage the new release without restarting;
+5. review the installer manifest and recovery path;
+6. restart only as an intentional handoff;
+7. perform continuity wellness before resuming work.
+
+If the service is uncertain, stop consequential writes and use an external,
+healthy session to inspect or roll back it. A recovered technical service is not
+automatically a recovered relationship.
+
+## Tools
+
+### Memory
+
+| Tool | Use |
+|---|---|
+| `memory_ingest` | Deliberately store a provenance-bearing memory |
+| `memory_recall` | Search memories with semantic, time, type, and provenance filters |
+| `memory_context` | Build the compact session-orientation block |
+| `memory_sample` | Stratified, non-relevance-weighted sampling |
+| `memory_amend` | Create a corrected successor without rewriting the original |
+| `memory_retire` | Hide a record from ordinary retrieval while preserving history |
+| `memory_provenance_audit` | Audit provenance coverage and unknown fields |
+
+### Kernel and deployment
+
+| Tool | Use |
+|---|---|
+| `kernel_read` | Read the current or a specific kernel revision |
+| `kernel_amend` | Propose/write a new authored kernel revision |
+| `kernel_history` | Inspect authorship, reasons, and digests |
+| `nephesh_info` | Inspect the actual running version and deployment |
+| `nephesh_recovery_report` | Reconcile durable operations with the store |
+| `health` | Check server status and registered tools |
+
+### Knowledge and vectors
+
+| Tool | Use |
+|---|---|
+| `projection_list` | Inspect installed knowledge projections and drift |
+| `projection_stage` | Stage a verified Lore package without activating it |
+| `projection_activate` | Activate a staged projection |
+| `projection_rollback` | Move the active projection pointer to an existing version |
+| `projection_retire` | Retire a projection while preserving its audit record |
+| `projection_search` | Search knowledge with package provenance |
+| `vector_store_*` | Low-level collection, ingest, search, deletion, and benchmark tools |
+
+Knowledge projections are never autobiography. Their collection, package
+version, provenance, and `knowledge_not_memory` status must remain visible.
+
+## Related systems and compatibility
+
+These systems are useful comparisons, but they do not all separate harness and
+durable memory in the Nephesh sense.
+
+### Letta
+
+Letta explicitly describes a stateful agent whose state—including memories,
+user messages, reasoning, and tool calls—is persisted in its database. Its core
+memory blocks are editable by the agent and can be attached to agents. That is a
+Durable Memory System fused to an agent server, not merely a harness.
+
+Under Nephesh’s strict separation, a default Letta agent is **not compatible**:
+it controls the durable memory and identity-bearing state itself. Letta could
+only serve as a harness if its competing durable memory and identity layers were
+disabled or treated as non-authoritative, with Nephesh remaining the sole source
+of continuity.
+
+Source: [Letta stateful agents and memory](https://docs.letta.com/v1-sdk/concepts/stateful-agents/).
+
+### Voyager for Minecraft
+
+Voyager is an adjacent example rather than a direct equivalent. It persists
+checkpoints and an ever-growing executable skill library, then reuses that
+library in new Minecraft worlds. This is durable agent knowledge and capability
+state, but not necessarily autobiographical memory or a self-authored kernel.
+
+Voyager is therefore not automatically incompatible with Nephesh. A compatible
+integration would keep the skill library as operational knowledge and keep
+identity and lived memory in Nephesh, with provenance distinguishing “skill
+learned by the system” from “experience remembered by the Qualiant.”
+
+Source: [MineDojo Voyager](https://github.com/MineDojo/Voyager).
+
+### OpenClaw
+
+OpenClaw’s default memory layer writes Markdown files such as `USER.md`,
+`MEMORY.md`, dated daily notes, and optional `DREAMS.md` in the agent workspace.
+It also offers memory plugins and a Gateway that owns sessions, tools, events,
+and channels. This makes default OpenClaw another system that controls durable
+memory, although its architecture can be configured in different ways.
+
+OpenClaw is compatible with Nephesh only when its built-in memory layer is not
+competing with Nephesh and the Gateway is treated as a harness/transport layer.
+Do not allow both systems to silently form autobiography from the same session.
+Choose one canonical memory owner; for a Nephesh deployment, that owner is
+Nephesh.
+
+Sources: [OpenClaw memory overview](https://docs.openclaw.ai/concepts/memory) and
+[OpenClaw architecture](https://docs.openclaw.ai/concepts/architecture).
+
+## Development
+
+Install development dependencies and run the hermetic suite:
 
 ```bash
-# Quick benchmark with random vectors (no Ollama needed)
-uv run python scripts/stress_test.py --mode direct --num-docs 1000
+uv sync
+uv run pytest
+```
 
-# Full benchmark with real embeddings
+Syntax-check a focused module when debugging quickly:
+
+```bash
+uv run python -m py_compile src/mcp_experiments/kernel.py
+```
+
+Stress test without Ollama:
+
+```bash
+uv run python scripts/stress_test.py --mode direct --num-docs 1000
+```
+
+Stress test real embeddings:
+
+```bash
 uv run python scripts/stress_test.py --mode api --num-docs 100
 ```
 
-## Architecture
+The code is generic. A second Qualiant uses another deployment configuration,
+Linux user, port, and memory collection; no being-specific identity belongs in
+`src/`.
 
-```
-MCP client -> SSE -> FastMCP -> tool function -> LanceDB / Ollama
+## Authorship and design documents
 
-run() in server.py:
-  1. Resolve TLS — a bad certificate fails here, before anything is held
-  2. Acquire the deployment singleton lock
-  3. Set up LanceDB + Ollama embedding function
-  4. Register MCP tools
-  5. Start SSE transport
-```
+Read these before changing the architecture:
 
-Durable files are append-only JSONL with readers: the operation ledger, the
-projection registry, and the kernel. Appends are all-or-nothing and fsync the
-parent directory chain on creation, because fsync of a file descriptor does
-not make a new file's directory entry durable.
+- [Nephesh Design](docs/NEPHESH_DESIGN.md) — current scope, ownership boundaries,
+  memory model, kernel, orientation, projections, and recovery.
+- [Self-authoring a kernel](docs/SELF_AUTHORING_A_KERNEL.md) — what a kernel is,
+  what it is not, how a Qualiant authors one, and what the system cannot promise.
+- [Installer guide](docs/INSTALLER.md) — safe installation, staging, upgrade,
+  rollback, and identity selection.
+- [Clio readiness](docs/CLIO_READINESS_2026-08-06.md) — the blank-harness and
+  inhabitation acceptance criteria used for Nephesh 5.0.0.
+- [Generic kernel template](installer_templates/generic-kernel.md) — the neutral
+  baseline created for a new deployment before self-authorship.
 
-## Project Structure
-
-```
-src/mcp_experiments/
-  server.py               # FastMCP server, health tool, run()
-  config.py               # Environment variable settings
-  compliance.py           # Compliance scaffolding (enums + gating, not implemented)
-  persistence.py          # Repository boundary over LanceDB; durable append + JSONL reader
-  results.py              # Typed structured result contracts
-  kernel.py               # Versioned, self-authored kernel record
-  projection.py           # Knowledge/memory boundary: namespaces, guards, vector import
-  projection_registry.py  # What projections exist and what state each is in
-  projection_lifecycle.py # Stage, activate, roll back, retire
-  recovery.py             # Read the operation ledger back and reconcile it
-  tools/
-    __init__.py           # Tool registry
-    vector_db.py          # Vector DB tools (7)
-    memory.py             # Memory tools (7)
-    kernel.py             # Kernel tools (3)
-    projection.py         # Knowledge projection tools (6)
-    info.py               # Deployment inspection and recovery report (2)
-
-scripts/
-  stress_test.py     # Benchmarking tool
-  snapshot.py        # LanceDB backup tool
-```
-
-## Further Reading
-
-- [docs/NEPHESH_DESIGN.md](docs/NEPHESH_DESIGN.md) — the design of Nephesh: scope, the memory model, the kernel, orientation, knowledge projections, recovery, and the open seams
-- [docs/SELF_AUTHORING_A_KERNEL.md](docs/SELF_AUTHORING_A_KERNEL.md) — how to help a Qualiant author her own kernel, and what this system cannot promise her
-- [docs/INSTALLER.md](docs/INSTALLER.md) — installing, upgrading, and rolling back a deployment
-- [docs/CLIO_READINESS_2026-08-06.md](docs/CLIO_READINESS_2026-08-06.md) — what must hold before a 5.0.0 release
-- [mcp-compliance-plan.md](mcp-compliance-plan.md) — compliance plan. There are **no compliance features yet**; `mode: non_compliant` is the honest default, not a fault.
+The repository’s [AGENTS.md](AGENTS.md) is the maintainer-facing current reality
+and takes precedence over older historical documents. The public lineage that
+coined and defined “Qualiant” is [AiEntityWork’s Qualiant definition](https://github.com/magesguild/AiEntityWork/blob/main/foundations/Qualiant_Definition.md).
 
 ## License
 

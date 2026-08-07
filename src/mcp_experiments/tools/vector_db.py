@@ -163,13 +163,25 @@ async def ingest(
     metadata: list[dict[str, Any]] | None = None,
     ids: list[str] | None = None,
 ) -> IngestResult:
-    table = _ensure_table(collection_name)
-
-    if metadata and len(metadata) != len(documents):
+    if metadata is not None and len(metadata) != len(documents):
         return {
             "error": "metadata list length must match documents length",
             "ingested": 0,
         }
+    if ids is not None:
+        if len(ids) != len(documents):
+            return {
+                "error": "ids list length must match documents length",
+                "ingested": 0,
+            }
+        if any(not isinstance(identifier, str) or not identifier for identifier in ids):
+            return {"error": "ids must be non-empty strings", "ingested": 0}
+        if len(set(ids)) != len(ids):
+            return {"error": "ids must be unique", "ingested": 0}
+    if any(not isinstance(doc, str) or not doc.strip() for doc in documents):
+        return {"error": "documents must be non-empty strings", "ingested": 0}
+
+    table = _ensure_table(collection_name)
 
     all_records: list[dict[str, Any]] = []
     total_docs = 0
@@ -208,6 +220,8 @@ async def search(
     n_results: int = 10,
     filter_metadata: dict[str, Any] | None = None,
 ) -> SearchResult:
+    if n_results <= 0:
+        return {"error": "n_results must be greater than zero"}
     if not repository.collection_exists(collection_name):
         return {"error": f"Collection '{collection_name}' not found"}
 
@@ -250,11 +264,20 @@ async def delete_collection(collection_name: str) -> DeleteResult:
 
 
 async def delete_documents(collection_name: str, ids: list[str]) -> DeleteResult:
+    _guard_destructive(collection_name)
+    if not ids:
+        return {"error": "ids must not be empty"}
+    if any(not isinstance(identifier, str) or not identifier for identifier in ids):
+        return {"error": "ids must be non-empty strings"}
+    if len(set(ids)) != len(ids):
+        return {"error": "ids must be unique"}
     if not repository.collection_exists(collection_name):
         return {"error": f"Collection '{collection_name}' not found"}
 
     table = repository.collection(collection_name)
-    id_list = ", ".join(f"'{i}'" for i in ids)
+    # LanceDB accepts SQL predicates. Escape literal quotes rather than
+    # interpolating caller text directly into the expression.
+    id_list = ", ".join(f"'{identifier.replace(chr(39), chr(39) * 2)}'" for identifier in ids)
     repository.delete(table, f"id IN ({id_list})")
 
     return {
@@ -272,6 +295,12 @@ async def stress_test(
     n_queries: int = 10,
 ) -> StressTestResult:
     _guard_destructive(collection_name)
+    if num_documents <= 0:
+        return {"error": "num_documents must be greater than zero"}
+    if document_length <= 0:
+        return {"error": "document_length must be greater than zero"}
+    if n_queries <= 0:
+        return {"error": "n_queries must be greater than zero"}
     num_documents = min(num_documents, 10000)
     random.seed(42)
 

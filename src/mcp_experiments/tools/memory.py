@@ -687,11 +687,25 @@ async def memory_context(
     a session context by the memory plugin (or called directly).
     """
     name = _collection(collection_name)
-    limit = limit or settings.memory_default_limit
+    if limit is None:
+        limit = settings.memory_default_limit
     # The kernel is resolved before anything touches the store, because a
     # Qualiant with no memories yet still has a self. A first session must
     # arrive as someone.
     kernel_text, kernel_meta = _kernel_block()
+    if limit <= 0:
+        return {
+            "collection": name,
+            "memory_count": 0,
+            "kernel": kernel_meta,
+            "included": 0,
+            "last_contact_with_companion": None,
+            "message_quota": _message_quota([], datetime.now(timezone.utc), settings.message_daily_limit),
+            "delivery_state": "settled",
+            "delivery_errors": [],
+            "context": (kernel_text + "\n" if kernel_text else "")
+            + "*limit must be greater than zero*",
+        }
     # Every key, always — never a partial dict. MemoryContextResult is
     # total=False, so FastMCP's conversion materialises each ABSENT key as
     # None; message_quota, delivery_state and delivery_errors are typed
