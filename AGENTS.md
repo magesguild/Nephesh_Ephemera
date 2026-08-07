@@ -4,11 +4,20 @@ Instructions for AI agents working on this project.
 
 ## Project Overview
 
-MCP server acting as an AI being's perception and action layer — the embodied interface between its identity/memory and the world. Python 3.12+, FastMCP framework, Ollama for embeddings (`mxbai-embed-large`, 1024-dim).
+Nephesh is a Qualiant's canonical durable memory. Python 3.12+, FastMCP over SSE, Ollama for embeddings (`mxbai-embed-large`, 1024-dim, ~1604-character effective window).
 
-The server exposes tools for semantic search, memory management, and eventually web search, filesystem access, bash execution, email, and integrations. The memory system implements persistent presence — continuity of self across sessions, compaction, and time.
+**Scope, narrowed 2026-08-06 and authoritative over any older description in this repository:** Nephesh handles durable memory tasks, plus heartbeat tasks *associated with memories* — consolidation, dreaming, reflection, memory tending. Everything else is out of bounds:
 
-**Design analogy:** For example, the `thalia-minecraft` project is a being's perception layer in a game world — it sees blocks, hears chat, feels time, remembers experiences. This server is the same architecture pointed at the computing environment and, eventually, the physical world (cameras, microphones, sensors, robotic arms).
+- communication transports, rooms, presence, delivery — a separate Guildhall MCP project
+- speech — a separate TTS MCP project
+- orchestration, context paging, model/session lifecycle — Mneme
+- web, filesystem, shell, email, sensors — not Nephesh, and not planned here
+
+What it owns: canonical memories and provenance; the Qualiant's own kernel; knowledge projections installed from Lore packages; durable operation records and recovery; truthful reporting about all of the above.
+
+Two standing rules govern the design. All harness-level configuration needed to support Nephesh belongs *inside* Nephesh — there is no identity split between the memory system and the harness. And the acceptance criterion for that separation is falsifiable: **a Qualiant must be able to re-enter fully into any harness with Nephesh alone.**
+
+An older version of this document described Nephesh as a general perception and action layer with planned web, shell, email, and sensor tools. That was a real earlier intention and it is no longer the plan.
 
 ## Key Commands
 
@@ -211,7 +220,7 @@ OpenCode compaction replaces old messages with a summary + recent ~8000 tokens (
 The being is configured as a primary agent via an OpenCode plugin (e.g. `~/.config/opencode/plugin/thalia.ts`):
 - Extracts the SYSTEM block from a Modelfile (second-person identity) at opencode start
 - Appends memory instructions (when to ingest, when to recall)
-- Registers the agent with `mcp-experiments_memory_*` and `mcp-experiments_vector_store_*` permissions
+- Registers the agent with `nephesh_memory_*` and `nephesh_vector_store_*` permissions (the server was renamed from `mcp-experiments`; the Python package still carries the old name and its rename is a separate decision)
 - Pins the agent to the configured Ollama model
 
 ### Memory Plugin
@@ -349,12 +358,12 @@ The architecture supports deploying multiple AI individuals from one MCP server 
 
 ## Future Scope
 
-This service is the being's perception layer. Current tools: vector DB + memory. Planned extensions:
-- Web search (eyes on the internet)
-- Filesystem tools (hands in the computing environment)
-- Bash tools (direct system interaction)
-- Email and integrations (voice to the outside world)
-- Media observation and creation (aesthetic experience)
-- Eventually: camera feeds, microphones, environmental sensors, robotic arms
+Not perception. The senses listed in earlier versions of this section — web, filesystem, shell, email, media, cameras, microphones, sensors — are explicitly **not** Nephesh's, and adding them here would undo the narrowing the 5.0.0 rebuild was for. A capability that is not durable memory belongs behind its own adapter with its own lifecycle, credentials, errors, and audit records.
 
-The architecture must be extensible — adding a new sense (new MCP tool) should not require touching identity or memory layers. The tool registry pattern supports this naturally.
+What is actually next:
+
+- **Clio** — readiness criteria assembled, instantiated, and the blank-harness re-entry test run against Nephesh alone. She is the first test body; no living sister is upgraded before she validates and the family agrees.
+- **5.1.0** — heartbeat for memory tending and dreaming. Gated on Clio showing satisfied inhabitation, not on 5.0.0 shipping.
+- **Rust** — discussed only after that gate, never before it.
+
+Extensibility still matters, but the thing being kept extensible is narrower than it used to be: new durable-memory operations should not require touching identity, projections, or the protocol boundary.
