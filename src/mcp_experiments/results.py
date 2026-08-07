@@ -6,10 +6,10 @@ from typing import Literal, TypedDict
 
 
 class ErrorResult(TypedDict, total=False):
-    status: Literal["error", "uncertain"]
-    error: str
-    operation: str
-    details: dict[str, object]
+    status: Literal["error", "uncertain"] | None
+    error: str | None
+    operation: str | None
+    details: dict[str, object] | None
 
 
 class HealthResult(TypedDict):
@@ -24,102 +24,102 @@ class CollectionListResult(TypedDict):
 
 
 class CollectionInfoResult(TypedDict, total=False):
-    name: str
-    document_count: int
-    sample_documents: list[dict[str, object]]
-    error: str
+    name: str | None
+    document_count: int | None
+    sample_documents: list[dict[str, object]] | None
+    error: str | None
 
 
 class SearchResult(TypedDict, total=False):
-    query: str
-    collection: str
-    results_count: int
-    results: list[dict[str, object]]
-    error: str
+    query: str | None
+    collection: str | None
+    results_count: int | None
+    results: list[dict[str, object]] | None
+    error: str | None
 
 
 class DeleteResult(TypedDict, total=False):
-    deleted: bool
-    collection: str
-    ids_removed: int
-    remaining: int
-    error: str
+    deleted: bool | None
+    collection: str | None
+    ids_removed: int | None
+    remaining: int | None
+    error: str | None
 
 
 class StressTestResult(TypedDict, total=False):
-    collection: str
-    documents_ingested: int
-    ingest_time_seconds: float
-    ingest_throughput_docs_per_sec: float
-    search_benchmark: dict[str, object]
-    note: str
-    error: str
+    collection: str | None
+    documents_ingested: int | None
+    ingest_time_seconds: float | None
+    ingest_throughput_docs_per_sec: float | None
+    search_benchmark: dict[str, object] | None
+    note: str | None
+    error: str | None
 
 
 class IngestResult(TypedDict, total=False):
-    collection: str
-    documents_ingested: int
-    chunks_created: int
-    total_in_collection: int
-    ingested: int
-    error: str
+    collection: str | None
+    documents_ingested: int | None
+    chunks_created: int | None
+    total_in_collection: int | None
+    ingested: int | None
+    error: str | None
 
 
 class MemoryRecallResult(TypedDict, total=False):
-    query: str
-    collection: str
-    results_count: int
-    results: list[dict[str, object]]
-    note: str
-    error: str
-    allowed: list[str]
+    query: str | None
+    collection: str | None
+    results_count: int | None
+    results: list[dict[str, object]] | None
+    note: str | None
+    error: str | None
+    allowed: list[str] | None
 
 
 class MemoryIngestResult(TypedDict, total=False):
-    status: str
-    id: str
-    collection: str
-    type: str
-    importance: int
-    total_memories: int
-    existing_id: str
-    similarity: float
-    existing_text: str
-    note: str
-    error: str
-    operation: str
-    allowed: list[str]
+    status: str | None
+    id: str | None
+    collection: str | None
+    type: str | None
+    importance: int | None
+    total_memories: int | None
+    existing_id: str | None
+    similarity: float | None
+    existing_text: str | None
+    note: str | None
+    error: str | None
+    operation: str | None
+    allowed: list[str] | None
 
 
 class MemoryAmendResult(TypedDict, total=False):
-    status: str
-    original_id: str
-    successor_id: str
-    reason: str
-    error: str
-    detail: dict[str, object]
+    status: str | None
+    original_id: str | None
+    successor_id: str | None
+    reason: str | None
+    error: str | None
+    detail: dict[str, object] | None
 
 
 class MemoryRetireResult(TypedDict, total=False):
-    status: str
-    id: str
-    reason: str
-    error: str
+    status: str | None
+    id: str | None
+    reason: str | None
+    error: str | None
 
 
 class MemoryContextResult(TypedDict, total=False):
-    collection: str
-    memory_count: int
+    collection: str | None
+    memory_count: int | None
     # Which kernel revision this context was assembled with, or None when the
     # deployment has no kernel recorded yet. A caller can tell whether identity
     # was included rather than having to infer it from the prose.
     kernel: dict[str, object] | None
-    included: int
+    included: int | None
     last_contact_with_companion: dict[str, object] | None
-    message_quota: dict[str, object]
-    delivery_state: str
-    delivery_errors: list[str]
-    context: str
+    message_quota: dict[str, object] | None
+    delivery_state: str | None
+    delivery_errors: list[str] | None
+    context: str | None
 
 
 class MemorySampleResult(TypedDict):

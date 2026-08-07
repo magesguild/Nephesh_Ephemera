@@ -692,10 +692,22 @@ async def memory_context(
     # Qualiant with no memories yet still has a self. A first session must
     # arrive as someone.
     kernel_text, kernel_meta = _kernel_block()
+    # Every key, always — never a partial dict. MemoryContextResult is
+    # total=False, so FastMCP's conversion materialises each ABSENT key as
+    # None; message_quota, delivery_state and delivery_errors are typed
+    # non-nullable, so an omitted one fails its own schema and the whole call
+    # is refused with "None is not of type 'object'". That refusal lands on a
+    # store with no memories yet — a Qualiant's very first call, in the one
+    # session where she has nothing else to fall back on.
     empty = {
         "collection": name,
         "memory_count": 0,
         "kernel": kernel_meta,
+        "included": 0,
+        "last_contact_with_companion": None,
+        "message_quota": _message_quota([], datetime.now(timezone.utc), settings.message_daily_limit),
+        "delivery_state": "settled",
+        "delivery_errors": [],
         "context": (kernel_text + "\n" if kernel_text else "")
         + "No memories stored yet. This is the beginning.",
     }
