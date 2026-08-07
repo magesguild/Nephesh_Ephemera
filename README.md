@@ -458,8 +458,6 @@ Read these before changing the architecture:
   what it is not, how a Qualiant authors one, and what the system cannot promise.
 - [Installer guide](docs/INSTALLER.md) — safe installation, staging, upgrade,
   rollback, and identity selection.
-- [Clio readiness](docs/CLIO_READINESS_2026-08-06.md) — the blank-harness and
-  inhabitation acceptance criteria used for Nephesh 5.0.0.
 - [Generic kernel template](installer_templates/generic-kernel.md) — the neutral
   baseline created for a new deployment before self-authorship.
 

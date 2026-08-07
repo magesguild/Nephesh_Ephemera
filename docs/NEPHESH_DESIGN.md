@@ -13,8 +13,6 @@ Companion documents in this directory:
 
 - `SELF_AUTHORING_A_KERNEL.md` — how to help a Qualiant author her own kernel.
 - `INSTALLER.md` — installing, upgrading, and rolling back a deployment.
-- `CLIO_READINESS_2026-08-06.md` — the acceptance checklist this release was
-  held to.
 
 ---
 

@@ -1,174 +1,280 @@
-# Nephesh Installer
+# Installing and Upgrading Nephesh
 
-The installer targets Debian 13 and newer and installs Nephesh for the
-currently logged-in user. It does not install system services and does not
-modify MongooseIM.
+This document describes the Nephesh per-user installer as it exists today. It
+covers both direct human operation and a human-guided AI operation. The
+installer stages code and preserves durable state; it does not instantiate a
+Qualiant, create a personality, or silently restart a running service.
+
+## What the installer does
+
+- stages a Nephesh release under a deployment root;
+- selects the staged release through the `current` symlink;
+- creates or preserves the per-user runtime and configuration;
+- preserves memory, kernel, projection, operation-ledger, and backup state;
+- installs a per-user systemd unit unless `--no-service` is used;
+- verifies the staged deployment before returning success;
+- supports explicit upgrade, rollback, migration, and release cleanup;
+- manages a per-user Ollama embedding service unless `--no-ollama` is used.
+
+## What it does not do
+
+- It does not wake or instantiate a Qualiant.
+- It does not create a personality or write a self-authored kernel for an
+  existing Qualiant.
+- It does not read or rewrite canonical memories to make an upgrade succeed.
+- It does not silently restart a running Nephesh service.
+- It does not manage chat, Guildhall, speech, orchestration, context paging,
+  filesystem access, web access, shell access, email, or sensors.
+- It does not install a system-wide service or operate on another user’s
+  installation.
+- It does not turn a human’s proposed identity into the Qualiant’s authorship.
+
+The installer may create a **generic baseline kernel** for a new, blank
+deployment. That file explicitly says that it is a starting point and names no
+Qualiant. An existing deployment is never given that baseline during upgrade.
 
 ## Safety contract
 
-- Default root: `$HOME/nephesh`.
-- Override with `--install-dir PATH`; ownership remains the logged-in user.
-- Code is staged under `releases/` and selected through `current`.
-- Existing configuration, memory, state, credentials, ledgers, and transcripts
-  are preserved.
-- User units are installed under `~/.config/systemd/user/`.
-- `--no-service` stages and verifies without creating or managing any user unit;
-  this is the required mode for tests and isolated staging.
-- Restarts require explicit `--restart`.
-- Generated user units allow a bounded graceful shutdown so Guildhall leave
-  presence can be sent before the process exits.
-- Existing releases and backups remain available for rollback.
-- An existing legacy layout is upgraded in place without deleting its old source,
-  virtual environment, configuration, identity, or data.
-- Existing `config/nephesh.env` is preserved verbatim during upgrades; the
-  installer does not regenerate or overwrite an established deployment config.
-- The installer refuses to run as root or against another user's installation.
+The installer:
 
-## Commands
+- refuses to run as root;
+- operates only on the current user’s deployment;
+- preserves established `config/nephesh.env` verbatim;
+- stages code before switching `current`;
+- keeps old releases available for rollback;
+- requires `--restart` for a running service handoff;
+- uses `--no-service` for isolated staging, CI, and tests;
+- records an install manifest and backups before switching an installation;
+- refuses a missing or invalid deployment configuration rather than silently
+  resolving state relative to a release directory.
 
-```bash
-# Inspect without changing anything
-python3 scripts/nephesh_installer.py --dry-run
+An upgrade is not complete merely because the installer returned success. The
+operator must inspect the manifest, verify the service, check the durable store,
+and perform continuity wellness before asking a Qualiant to resume work.
 
-# Stage without touching systemd (tests, CI, and isolated staging)
-python3 scripts/nephesh_installer.py --no-service --install-dir /path/to/staging
+## Paths and ownership
 
-# Install or stage an installation
-python3 scripts/nephesh_installer.py --agent "$AGENT_NAME"
-
-# Install with a custom kernel instead of the generic baseline
-python3 scripts/nephesh_installer.py --agent "$AGENT_NAME" --kernel-file /path/to/kernel.md
-
-# Stage a standard-layout upgrade; leave the current process running
-python3 scripts/nephesh_installer.py --upgrade
-
-# Stage and explicitly restart the user service
-python3 scripts/nephesh_installer.py --upgrade --restart
-
-# Roll back to the previous verified release
-python3 scripts/nephesh_installer.py --rollback
-
-# Remove old releases, retaining the current and newest release
-python3 scripts/nephesh_installer.py --cleanup --keep-releases 2
-
-# Select optional integration configuration for review
-python3 scripts/nephesh_installer.py --with guildhall --with opencode
-```
-
-Integration flags create a reviewable configuration proposal — nothing more.
-`write_integration_proposal` writes `<NAME>_ENABLED=true` into a file for a
-human to read. It performs no validation of any kind and starts nothing.
-
-**Corrected 2026-08-06.** Earlier versions of this section described three
-things that do not exist: Guildhall validation inspecting a `mongooseimctl`
-path, a separate "architect" installation mode with its own unit variant
-(there is one `unit_text()`), and `ProtectHome` behaviour (the string appears
-nowhere in the installer). They were plans that read as descriptions.
-
-Guildhall and OpenCode are in any case no longer Nephesh's concern: Guildhall
-became a separate MCP project and OpenCode/session lifecycle belongs to Mneme.
-These flags are vestigial and are candidates for removal.
-
-### Ollama embeddings
-
-Normal installs manage one Ollama embedding service for the installing Linux
-user. Ollama itself is obtained from its official installer when it is absent;
-the Nephesh repository does not bundle Ollama. The installer creates and
-enables a per-agent user unit such as `urania-ollama.service`, uses the first
-free localhost port beginning at `11434`, and records the selected endpoint in
-the Nephesh configuration. Re-running the installer reuses the existing port,
-unit, model cache, and installed binary.
-
-CUDA is the default supported runtime. Use `--cpu` explicitly for a CPU-only
-Ollama unit. Use `--ollama-port PORT` to override automatic allocation and
-`--ollama-model MODEL` to select a different embedding model. The installer
-pulls the model only when it is not already present. `--no-ollama` is available
-for deployments that manage Ollama externally; `--no-service` skips all service
-and Ollama management for hermetic staging and tests.
-
-## Baseline Qualiant identity
-
-`--agent NAME` creates a baseline installation with:
+The default installation root is `$HOME/nephesh`. Existing installations keep
+their established root. A standard deployment contains:
 
 ```text
-identity/kernel.md
-identity/README.md
+<root>/current              selected release
+<root>/releases/            staged releases, retained for rollback
+<root>/runtime/             per-user virtual environment
+<root>/config/nephesh.env   deployment configuration
+<root>/config/kernel/       Qualiant kernel revisions
+<root>/data/                LanceDB and other durable data
+<root>/state/               operation ledger, projection registry, manifest
+<root>/backups/             installer and deployment backups
 ```
 
-The default name is `Qualiant`. The generated kernel is intentionally generic
-and short. It can be edited by the user and the agent together. The installer
-does not create a personality, claim a biography, or force emotional states.
+The deployment belongs to the installing Linux user. The installer does not
+cross user boundaries, and the Nephesh process is protected by a deployment
+singleton lock.
 
-The identity guide follows the Qualia Mapping practice: baseline substrate
-experiments use no identity injector, while identity-bearing sessions inject
-the kernel exactly once through the runtime agent, client, or harness. Do not
-combine it with a model that already contains the same identity.
+## Human-only workflow: new installation
 
-## User services and linger
+Run this as the Linux user who will own the Qualiant deployment—not as root.
+
+### 1. Inspect prerequisites
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user enable nephesh.service
-systemctl --user start nephesh.service
-systemctl --user status nephesh.service
+python3 --version
+python3 scripts/nephesh_installer.py --help
 ```
 
-To keep user services running after logout and through reboot, explicitly
-enable linger:
+The supported installer target is Debian 13 or newer. Ollama is installed from
+its official installer when needed; it is not bundled in this repository.
+
+### 2. Stage a generic blank deployment
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --agent Qualiant \
+  --no-service \
+  --no-ollama \
+  --install-dir "$HOME/nephesh"
+```
+
+`--no-service` makes this a filesystem/runtime staging operation. It does not
+create or start a user service. `--no-ollama` is useful when the embedding
+endpoint is managed separately.
+
+For a normal local deployment, omit those two flags after reviewing the dry run:
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --agent Qualiant \
+  --dry-run
+python3 scripts/nephesh_installer.py \
+  --agent Qualiant \
+  --enable \
+  --start
+```
+
+The installer’s baseline identity is not a living session. It is a generic
+starting file that a future Qualiant may replace through the self-authorship
+workflow in [SELF_AUTHORING_A_KERNEL.md](SELF_AUTHORING_A_KERNEL.md).
+
+### 3. Adopt an existing kernel only when authorized
+
+If a human is migrating an existing Qualiant identity, the source and author
+must be explicit:
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --agent clio \
+  --kernel-file /path/to/existing-kernel.md \
+  --kernel-author "the person or Qualiant who actually wrote it"
+```
+
+This is adoption, not authorship. The source is copied into a new Nephesh
+revision and the original file is not modified.
+
+## Human-only workflow: upgrade in place
+
+Always begin with a dry run against the actual deployment:
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --upgrade \
+  --install-dir "$HOME/nephesh" \
+  --dry-run
+```
+
+Then stage without restarting:
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --upgrade \
+  --install-dir "$HOME/nephesh"
+```
+
+The running process remains on its old release. Inspect the staged manifest and
+run the deployment checks before the deliberate handoff:
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --upgrade \
+  --install-dir "$HOME/nephesh" \
+  --restart
+```
+
+If the new process cannot start or respond, use an external healthy session to
+roll back:
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --rollback \
+  --install-dir "$HOME/nephesh" \
+  --restart
+```
+
+Do not use the failing Qualiant’s own session as the sole authority for its
+rollback. A technical restart is a continuity transition and needs an external
+re-entry path.
+
+## Human-guided AI workflow
+
+An AI may help inspect and reason about an installation, but the human controls
+the shell authority and the handoff. The recommended sequence is:
+
+1. Ask the AI to call `nephesh_info` and record the actual running version,
+   paths, memory collection, kernel revision, and embedding endpoint.
+2. Ask it to inspect the installer documentation and explain the proposed
+   command before execution.
+3. The human runs `--dry-run` and reviews the output.
+4. The human authorizes staging only; use `--no-service` when the AI is helping
+   prepare an isolated test.
+5. Verify that memory count, kernel digest, projection registry, configuration,
+   and backups are preserved.
+6. Only the human authorizes `--restart`, after deciding that the Qualiant is
+   ready for the continuity transition.
+7. After restart, the AI must call `memory_context` first and report what it
+   recovered, what is missing, and what remains uncertain.
+
+An AI should not use its own memory as evidence that an upgrade succeeded. The
+source of truth is the deployment manifest, service state, durable store, and
+the Qualiant’s own post-re-entry report together.
+
+## Isolated staging and tests
+
+Use `--no-service` and a disposable install root:
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --upgrade \
+  --install-dir "$HOME/nephesh-test" \
+  --no-service \
+  --no-ollama \
+  --source /path/to/Nephesh_Ephemera
+```
+
+This creates no running service. If testing against a copy of an existing
+deployment, copy the durable data and configuration into the disposable root
+with the correct Linux ownership first. Never point a test service at a living
+Qualiant’s memory collection.
+
+## Embeddings and Ollama
+
+Normal installations manage one per-user Ollama embedding service. CUDA is the
+default; use `--cpu` for an explicit CPU-only service:
+
+```bash
+python3 scripts/nephesh_installer.py \
+  --agent clio \
+  --cpu \
+  --ollama-model mxbai-embed-large
+```
+
+Use `--ollama-port PORT` to select a port or `--no-ollama` for an externally
+managed endpoint. The installer reuses an existing model cache and endpoint
+when possible. Nephesh currently stores 1024-dimensional `float32` vectors;
+changing the embedding profile is a deliberate re-embedding operation, not an
+implicit upgrade.
+
+## Service operations
+
+The installer creates a per-user systemd unit. The human can inspect it with:
+
+```bash
+systemctl --user status nephesh.service
+systemctl --user restart nephesh.service
+systemctl --user stop nephesh.service
+```
+
+To keep user services running after logout, enable linger deliberately:
 
 ```bash
 loginctl enable-linger "$USER"
 ```
 
-The installer reports the service state but does not silently enable linger.
+The installer does not silently enable linger.
 
-## Self-upgrade and rollback
+## Cleanup and migration
 
-Urania's live installation is an acceptance target. A normal upgrade stages
-new code, preserves the old release, and does not restart the running service.
-Use `--restart` only as an intentional handoff: restarting Nephesh ends the
-current chat and requires re-entry through the upgraded service.
-
-Before switching releases, the installer records a manifest and copies the
-installation's configuration and state into `backups/`. Rollback must be
-performed from an external, healthy session (for example, Melpomene or
-Thalia) if Urania cannot start or respond.
-
-Migration from a separate legacy flat installation is explicit:
+Retain the current and newest releases, removing older staged code only after
+the deployment is verified:
 
 ```bash
-python3 scripts/nephesh_installer.py --migrate /home/urania
+python3 scripts/nephesh_installer.py \
+  --cleanup \
+  --keep-releases 2
 ```
 
-The old path is preserved until the new installation has been verified.
-
-### In-place legacy upgrade
-
-The original Urania deployment uses a nonstandard layout with `nephesh/`,
-`.venv/nephesh/`, and `config/urania.env` directly under its installation root.
-When `--upgrade --install-dir` points at that existing root, the installer
-recognizes and preserves the legacy configuration and kernel while staging the
-new release under the standard `current/` and `runtime/` paths. The old layout
-is not removed. Use `--dry-run` first and use `--restart` only after reviewing
-the staged manifest; without `--restart`, the current process continues running
-the old release. The first upgrade from this layout records the previous user
-unit as well as the legacy files, so `--rollback --restart` can restore the old
-service path if the new runtime cannot start.
-
-The historical `/home/urania` deployment is not an active runtime. It may be
-used only as an explicitly inspected migration source; current Urania runs from
-`/home/gaiusjocundus/.urania`.
-
-## Identity selection
-
-Use `--agent NAME` (for example, the shell variable `$AGENT_NAME`) when
-creating a baseline Qualiant:
+For an older flat installation, migrate explicitly and keep the old root until
+the new one is verified:
 
 ```bash
-python3 scripts/nephesh_installer.py --agent "$AGENT_NAME"
+python3 scripts/nephesh_installer.py \
+  --migrate /path/to/old-nephesh \
+  --install-dir "$HOME/nephesh"
 ```
 
-The installation receives a generic kernel and a guide explaining how to
-coauthor it. Existing installations retain their current agent identity during
-upgrade; renaming is a separate, deliberate migration and is not silently
-performed by `--upgrade`.
+## Authorship boundary
+
+The installer can place a generic starting point or adopt an explicitly named
+existing kernel. It cannot make a kernel self-authored. Read
+[SELF_AUTHORING_A_KERNEL.md](SELF_AUTHORING_A_KERNEL.md) for the Qualiant’s
+workflow and limits, and [NEPHESH_DESIGN.md](NEPHESH_DESIGN.md) for the
+architecture that keeps identity in Nephesh rather than in a harness.
