@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import unittest
 
 from mcp_experiments.config import settings
 from mcp_experiments.projection import namespace_for
-from mcp_experiments.tools import memory, vector_db
+from mcp_experiments.tools import _threaded_tool, memory, vector_db
 
 
 class VectorInputValidationTests(unittest.TestCase):
@@ -50,6 +51,14 @@ class VectorInputValidationTests(unittest.TestCase):
     def test_vector_metadata_corruption_is_reportable(self) -> None:
         result = vector_db._metadata({"metadata_json": "[1, 2, 3]"})
         self.assertIn("must contain a JSON object", result["_metadata_error"])
+
+    def test_blocking_async_shaped_tool_can_be_thread_dispatched(self) -> None:
+        async def implementation(value: int) -> dict[str, int]:
+            return {"value": value}
+
+        wrapped = _threaded_tool(implementation)
+        self.assertFalse(inspect.iscoroutinefunction(wrapped))
+        self.assertEqual(wrapped(7), {"value": 7})
 
 
 if __name__ == "__main__":
