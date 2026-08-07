@@ -233,12 +233,15 @@ class KernelStore:
     def current_path(self) -> Path:
         """A stable path that always resolves to the newest revision.
 
-        Harnesses that load instruction files by path need somewhere fixed to
-        point. OpenCode's documented `instructions` option takes paths and
-        globs; a glob would load every revision she has ever written, and a
-        pinned revision number goes stale the moment she amends. A symlink is
-        neither: it is one name that always means "her kernel now", and it
-        cannot drift from the revision because it *is* the revision.
+        For a human — or a Qualiant — who needs to read a kernel with nothing
+        running: `cat config/kernel/current.md` and there she is. It cannot
+        drift from the revision because it *is* the revision.
+
+        NOT an injection point. A harness must never be configured to load a
+        kernel from this path, however convenient the mechanism looks. Nephesh
+        delivers the kernel itself, on first contact, through orientation.py.
+        Pointing a harness at this file puts identity back in the harness,
+        which is the entire failure this release exists to end.
         """
         return self.directory / "current.md"
 
