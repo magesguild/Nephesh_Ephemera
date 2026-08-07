@@ -47,6 +47,10 @@ class VectorInputValidationTests(unittest.TestCase):
         self.assertEqual(result["_metadata_row_id"], "broken")
         self.assertIn("not valid JSON", result["_metadata_error"])
 
+    def test_vector_metadata_corruption_is_reportable(self) -> None:
+        result = vector_db._metadata({"metadata_json": "[1, 2, 3]"})
+        self.assertIn("must contain a JSON object", result["_metadata_error"])
+
 
 if __name__ == "__main__":
     unittest.main()

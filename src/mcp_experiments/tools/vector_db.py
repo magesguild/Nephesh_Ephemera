@@ -33,7 +33,14 @@ class OllamaEmbeddingFunction:
                 json={"model": self.model, "prompt": text},
             )
             resp.raise_for_status()
-            return resp.json()["embedding"]
+            vector = resp.json()["embedding"]
+            if not isinstance(vector, list) or len(vector) != _VECTOR_DIM:
+                raise ValueError(
+                    f"embedding model {self.model!r} returned "
+                    f"{len(vector) if isinstance(vector, list) else 'non-vector'} dimensions; "
+                    f"Nephesh requires {_VECTOR_DIM}"
+                )
+            return vector
 
     def embed_many(self, texts: list[str]) -> list[list[float]]:
         return [self.embed(t) for t in texts]
@@ -54,6 +61,17 @@ _TABLE_SCHEMA = pa.schema([
 ])
 
 repository = PersistenceRepository(_TABLE_SCHEMA)
+
+
+def _metadata(row: dict[str, Any]) -> dict[str, Any]:
+    """Return row metadata without allowing one corrupt row to break a read."""
+    try:
+        parsed = json.loads(row.get("metadata_json", "{}") or "{}")
+    except (TypeError, json.JSONDecodeError) as exc:
+        return {"_metadata_error": f"metadata_json is not valid JSON: {exc}"}
+    if not isinstance(parsed, dict):
+        return {"_metadata_error": "metadata_json must contain a JSON object"}
+    return parsed
 
 
 def init(
@@ -142,7 +160,7 @@ async def collection_info(collection_name: str) -> CollectionInfoResult:
             sample = [
                 {
                     "id": r["id"],
-                    "metadata": json.loads(r.get("metadata_json", "{}")),
+                    "metadata": _metadata(r),
                     "document_preview": r.get("text", "")[:200],
                 }
                 for r in sample_data
@@ -234,7 +252,7 @@ async def search(
 
     hits = []
     for r in results:
-        meta = json.loads(r.get("metadata_json", "{}"))
+        meta = _metadata(r)
         if filter_metadata and not matches_filter(meta, filter_metadata):
             continue
         hits.append({
