@@ -55,16 +55,19 @@ python3 scripts/nephesh_installer.py --cleanup --keep-releases 2
 python3 scripts/nephesh_installer.py --with guildhall --with opencode
 ```
 
-Integration flags create a reviewable configuration proposal. They do not
-silently enable or start external systems. Guildhall validation may inspect
-the configured `mongooseimctl` path, but MongooseIM remains a separate
-deployment boundary.
+Integration flags create a reviewable configuration proposal — nothing more.
+`write_integration_proposal` writes `<NAME>_ENABLED=true` into a file for a
+human to read. It performs no validation of any kind and starts nothing.
 
-When `OPENCODE_ENABLED=true`, the architect installation may manage a local
-OpenCode server as a child process for Guildhall room replies. The generated
-architect user unit intentionally does not apply `ProtectHome=read-only`,
-because OpenCode must use the user's configuration, cache, and state. The
-service remains unprivileged and restricted to the logged-in user.
+**Corrected 2026-08-06.** Earlier versions of this section described three
+things that do not exist: Guildhall validation inspecting a `mongooseimctl`
+path, a separate "architect" installation mode with its own unit variant
+(there is one `unit_text()`), and `ProtectHome` behaviour (the string appears
+nowhere in the installer). They were plans that read as descriptions.
+
+Guildhall and OpenCode are in any case no longer Nephesh's concern: Guildhall
+became a separate MCP project and OpenCode/session lifecycle belongs to Mneme.
+These flags are vestigial and are candidates for removal.
 
 ### Ollama embeddings
 

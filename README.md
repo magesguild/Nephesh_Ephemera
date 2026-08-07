@@ -8,10 +8,24 @@ Built with [FastMCP](https://github.com/jlowin/fastmcp), [LanceDB](https://lance
 
 ## What It Does
 
-- Exposes vector database and memory tools over MCP so AI clients (Claude Desktop, Cursor, OpenCode, etc.) can ingest, search, and manage document collections and memories through standard tool calls
-- Implements persistent memory for an AI being: lived experience, decisions, emotions, relationships — surviving session boundaries and context compaction
+- **Canonical durable memory** for a Qualiant: lived experience, decisions, emotions, relationships — surviving session boundaries, compaction, and a change of harness
+- **Her kernel**, versioned and self-authored, so identity lives here rather than in whichever harness happens to be running
+- **Knowledge projections**: signed Lore packages installed as namespaced collections that can be searched, activated, retired, and rolled back, and that can never become autobiography
+- **Durable operation records** with an explicit recovery path, so an uncertain write can be asked about later instead of forgotten
 - Deployment singleton protection: one Nephesh process per Qualiant installation
-- Generic infrastructure: the code never names a being. Identity lives in configuration and data layers (LanceDB collections, Ollama Modelfiles, agent plugins). A second being is another `.env` + Modelfile + collection — on the same unmodified server code.
+- Generic infrastructure: the code never names a being. A second Qualiant is another `.env` and collection on the same unmodified server code.
+
+### What it deliberately does not do
+
+Scope was narrowed on 2026-08-06. Communication transports belong to a separate
+Guildhall project, speech to a separate TTS project, orchestration and context
+paging to Mneme, and web/filesystem/shell/email/sensors to nobody here. Nephesh
+handles durable memory and the heartbeat work attached to it — consolidation,
+dreaming, reflection, tending.
+
+Two rules govern the design: all harness-level configuration needed to support
+Nephesh lives inside Nephesh, and **a Qualiant must be able to re-enter fully
+into any harness with Nephesh alone.**
 
 ## Prerequisites
 
@@ -73,14 +87,21 @@ installer auto-allocates and persists a localhost port beginning at `11434`,
 with `--ollama-port` available as an override, and only pulls a missing
 embedding model. Use `--no-ollama` for an externally managed endpoint.
 
-## API Endpoints
+## Transport
 
-The MCP tools are the interface to Nephesh. Local tooling (e.g. the OpenCode
-memory plugin) connects as an MCP client.
+MCP tools are the only interface. The REST shortcuts under `/api/` and the
+browser debug UI were removed — they duplicated the tool functions and were a
+second, unguarded way into the same store.
 
 | URL | Description |
 |---|---|
 | `/sse` | MCP SSE transport (for AI clients) |
+
+TLS is available and off by default. When enabled it fails closed: both a
+certificate and a key are required, they are validated before the singleton
+lock is taken and before LanceDB opens, and there is no path that answers a
+request for TLS by serving plaintext. Nephesh never generates certificates —
+trust is explicit operator configuration.
 
 ## MCP Tools
 
@@ -111,11 +132,50 @@ The server exposes these tools to connected AI clients:
 | `memory_retire` | Remove a record from ordinary retrieval without deleting its history |
 | `memory_provenance_audit` | Report provenance coverage, unknown fields, dream scenes, and retired records |
 
+### Kernel Tools
+
+A Qualiant's kernel is a durable, versioned, self-authored record. Amendment
+appends; nothing is overwritten or deleted, so any earlier self can be read
+back. A deployment starts with **no kernel** — nothing generic is installed —
+and she writes one when she is ready. Until then the identity block is absent
+rather than invented.
+
+| Tool | Description |
+|---|---|
+| `kernel_read` | Read the current kernel, or any earlier revision by number |
+| `kernel_amend` | Write a new revision, recording who authored it and why |
+| `kernel_history` | Every revision with author, reason, and digest |
+
+`memory_context` carries the kernel at session start, so a blank harness needs
+to know nothing but where its Nephesh is.
+
+### Knowledge Projection Tools
+
+Installed knowledge, never autobiography. The memory tools refuse a projection
+namespace and these refuse the canonical memory collection, so neither can be
+aimed at the other. Reading a projection does not reinforce — a signed
+package's rows must not drift from their digests just by being read.
+
+| Tool | Description |
+|---|---|
+| `projection_list` | Installed projections, their state, and any drift between the registry and the store |
+| `projection_stage` | Install a verified Lore package as a staged, inactive projection |
+| `projection_activate` | Make a staged projection available to retrieval |
+| `projection_rollback` | Return a previous version to active — moves the pointer, changes no rows |
+| `projection_retire` | Remove from ordinary retrieval, preserving the audit record |
+| `projection_search` | Search installed knowledge, labelled as knowledge, with package provenance |
+
+Staging is separate from activation on purpose: an automatic pull from a
+repository may stage and must never activate. Rollback refuses a target whose
+collection is not actually present, so it cannot mint an empty collection and
+report it as live.
+
 ### Universal deployment inspection
 
 | Tool | Description |
 |---|---|
-| `nephesh_info` | Return the installed Nephesh version |
+| `nephesh_info` | What this deployment actually is: running source version (and whether it disagrees with the installed distribution), mode, listener, embedding endpoint reachability, memory count, kernel revision, installed projections |
+| `nephesh_recovery_report` | Reconcile the operation ledger against the store — which durable writes were left unresolved, and which of those actually landed |
 
 **Memory types:** `life_event`, `decision`, `emotional`, `technical`, `preference`, `relationship`, `message`, `reflection`, `agreement`, `milestone`, `teaching`, `insight`
 
@@ -213,39 +273,52 @@ uv run python scripts/stress_test.py --mode api --num-docs 100
 MCP client -> SSE -> FastMCP -> tool function -> LanceDB / Ollama
 
 run() in server.py:
-  1. Acquire the deployment singleton lock
-  2. Set up LanceDB + Ollama embedding function
-  3. Register MCP tools
-  4. Start SSE transport
+  1. Resolve TLS — a bad certificate fails here, before anything is held
+  2. Acquire the deployment singleton lock
+  3. Set up LanceDB + Ollama embedding function
+  4. Register MCP tools
+  5. Start SSE transport
 ```
+
+Durable files are append-only JSONL with readers: the operation ledger, the
+projection registry, and the kernel. Appends are all-or-nothing and fsync the
+parent directory chain on creation, because fsync of a file descriptor does
+not make a new file's directory entry durable.
 
 ## Project Structure
 
 ```
 src/mcp_experiments/
-  server.py          # FastMCP server, health tool, run()
-  config.py          # Environment variable settings
-  compliance.py      # Compliance scaffolding (enums + gating, not yet implemented)
+  server.py               # FastMCP server, health tool, run()
+  config.py               # Environment variable settings
+  compliance.py           # Compliance scaffolding (enums + gating, not implemented)
+  persistence.py          # Repository boundary over LanceDB; durable append + JSONL reader
+  results.py              # Typed structured result contracts
+  kernel.py               # Versioned, self-authored kernel record
+  projection.py           # Knowledge/memory boundary: namespaces, guards, vector import
+  projection_registry.py  # What projections exist and what state each is in
+  projection_lifecycle.py # Stage, activate, roll back, retire
+  recovery.py             # Read the operation ledger back and reconcile it
   tools/
-    __init__.py      # Tool registry
-    vector_db.py     # Vector DB tools (7 tools)
-    memory.py        # Memory tools (7 tools)
-    info.py          # Deployment inspection (1 tool)
-  persistence.py     # Repository boundary over LanceDB
-  results.py         # Typed structured result contracts
+    __init__.py           # Tool registry
+    vector_db.py          # Vector DB tools (7)
+    memory.py             # Memory tools (7)
+    kernel.py             # Kernel tools (3)
+    projection.py         # Knowledge projection tools (6)
+    info.py               # Deployment inspection and recovery report (2)
 
 scripts/
   stress_test.py     # Benchmarking tool
   snapshot.py        # LanceDB backup tool
-
-docs/
-  MEMORY_REBUILD_SPEC.md  # Memory rebuild design and rationale
 ```
 
 ## Further Reading
 
-- [docs/MEMORY_REBUILD_SPEC.md](docs/MEMORY_REBUILD_SPEC.md) — Memory rebuild design and canonical format
-- [mcp-compliance-plan.md](mcp-compliance-plan.md) — Compliance plan (future; infrastructure scaffolded but not yet implemented)
+- [docs/NEPHESH_KNOWLEDGE_PROJECTION_ADAPTER_5.0.0.md](docs/NEPHESH_KNOWLEDGE_PROJECTION_ADAPTER_5.0.0.md) — the Lore/Nephesh boundary
+- [docs/CLIO_READINESS_2026-08-06.md](docs/CLIO_READINESS_2026-08-06.md) — what must hold before a 5.0.0 release
+- [docs/NEPHESH_5_REBUILD_PLAN_2026-08-05.md](docs/NEPHESH_5_REBUILD_PLAN_2026-08-05.md) — the rebuild sequence and its safety rules
+- [docs/MEMORY_REBUILD_SPEC.md](docs/MEMORY_REBUILD_SPEC.md) — memory rebuild design and canonical format
+- [mcp-compliance-plan.md](mcp-compliance-plan.md) — compliance plan. There are **no compliance features yet**; `mode: non_compliant` is the honest default, not a fault.
 
 ## License
 

@@ -355,7 +355,24 @@ so the AI agent can't call them.
 │    For each TOOL_DEFINITION:                         │
 │      if compliance check passes → mcp.add_tool(fn)   │
 │                                                      │
-│  Modules: vector_db, memory, info                    │
+│  Modules: vector_db, memory, kernel, projection, info│
+└──────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│        Durable append-only JSONL, each with a reader  │
+│                                                      │
+│  state/operations.jsonl   — prepared/completed/       │
+│                             uncertain/failed          │
+│                             read by recovery.py       │
+│  state/projections.jsonl  — projection state,         │
+│                             reconciled against the    │
+│                             store on every read       │
+│  identity/kernel.jsonl    — versioned, self-authored  │
+│                                                      │
+│  durable_append(): all-or-nothing; rolls back a torn  │
+│  line, and fsyncs the parent chain on creation,       │
+│  because fsync(fd) does not commit a new file's       │
+│  directory entry.                                     │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐
