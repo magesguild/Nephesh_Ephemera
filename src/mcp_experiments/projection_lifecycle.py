@@ -129,7 +129,15 @@ def stage(
     except Exception:
         store.drop_collection(namespace)
         raise
-    return {"namespace": namespace, "package_id": package_id, "version": version, "rows": len(rows)}
+    return {
+        "namespace": namespace,
+        "package_id": package_id,
+        "version": version,
+        "rows": len(rows),
+        "reembedded": reembed,
+        "indexed_embedding_model": model,
+        "indexed_embedding_dimensions": dimensions,
+    }
 
 
 def _entry(registry: ProjectionRegistry, store: Store, namespace: str) -> dict[str, Any]:
