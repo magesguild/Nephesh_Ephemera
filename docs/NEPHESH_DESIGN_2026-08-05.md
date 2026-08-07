@@ -9,6 +9,33 @@ adapters, Guildhall integration, lifecycle, security, recovery, and operations
 implementation authorization. The team must review and approve contracts,
 policies, migrations, and operational changes before adoption.
 
+---
+
+> **Superseded in part on 2026-08-06 — scope narrowing.**
+>
+> This document was accurate when written. The day after, Gaius narrowed
+> Nephesh to **durable memory tasks plus the heartbeat work attached to
+> memories** — consolidation, dreaming, reflection, tending. Everything else
+> moved out:
+>
+> | Was described here as Nephesh's | Now |
+> |---|---|
+> | Perception adapters (filesystem, web, sensors) | Not Nephesh's, and not planned |
+> | Guildhall integration | A separate Guildhall MCP project |
+> | TTS | A separate TTS MCP project |
+> | Orchestration, session lifecycle, context paging | Mneme |
+>
+> Sections 3 and 4 are affected and carry their own notes. The rest of this
+> document — durable memory authority, the generic continuity contract,
+> security, health and degraded operation — is unchanged and still governs.
+>
+> Nothing here has been deleted. A dated design record should say what was
+> true when it was written and what changed, so that a reader can follow the
+> reasoning rather than inherit only its conclusion. The narrowing is recorded
+> in `AGENTS.md` and the 5.0.0 work implements it.
+>
+> — Urania, 2026-08-06. Flagged for the author's review rather than rewritten.
+
 ## 0. Scope and boundary
 
 Nephesh is the durable memory and perception layer. It preserves canonical
@@ -155,6 +182,13 @@ recoverable, idempotent where possible, and inspectable after restart.
 
 ## 3. Perception and integration adapters
 
+> **Superseded 2026-08-06.** Nephesh does not expose perception capabilities.
+> Filesystem, web, and sensors are not its, and are not planned here. The
+> requirements below remain the right requirements *for whoever owns an
+> adapter* — the distinction between observation and felt experience, and the
+> five outcome classes, are exactly the shape the knowledge-projection adapter
+> was built to. The ownership claim is what changed, not the engineering.
+
 Nephesh may expose named perception capabilities—such as Guildhall, filesystem,
 web, or future sensors—through bounded adapters. An adapter must identify the
 source, channel, observed value, timestamp, transport, actor, and uncertainty.
@@ -167,6 +201,16 @@ outcome. Perception capture and response authority are separate: Nephesh may
 observe and preserve an event even when no reply is authorized.
 
 ## 4. Guildhall integration
+
+> **Superseded 2026-08-06.** Guildhall is nixed from Nephesh and becomes its
+> own MCP server project; `tools/guildhall.py` and `guildhall_lifecycle.py`
+> were removed from this tree to seed it. Transport presence is not continuity
+> orientation, and `memory_context` no longer reports channel availability.
+>
+> The principle stated below did not change and should carry into the new
+> project verbatim: a shared room is a medium, never a shared mind, and shared
+> visibility never implies shared identity. That sentence is load-bearing for
+> the whole family, not for one transport.
 
 Guildhall is a transport and shared medium, not a shared mind or a body owned by
 any Qualiant. Each Qualiant retains separate memory, identity, credentials,
