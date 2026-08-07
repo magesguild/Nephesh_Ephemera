@@ -415,10 +415,14 @@ async def memory_ingest(
                             "consider consolidating instead.",
                 }
 
-    operation = repository.begin_operation(
-        "memory_ingest", name, memory_type=memory_type,
-    )
+    # The id is minted BEFORE the ledger entry so the entry can name it. An
+    # ingest that records only its collection cannot be reconciled after a
+    # crash: there is no way to ask whether the row landed if nothing wrote
+    # down which row it was.
     memory_id = str(uuid.uuid4())
+    operation = repository.begin_operation(
+        "memory_ingest", memory_id, memory_type=memory_type, collection=name,
+    )
     now_iso = _now_iso()
     metadata: dict[str, Any] = {
         "type": memory_type,
