@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -27,6 +28,7 @@ from .vector_db import repository
 
 
 _guidance_store = GuidanceStore(settings.memory_hygiene_state_file)
+_MESSAGE_DELIVERY_LOCK = threading.RLock()
 
 
 def _guidance_projection_available() -> bool:
@@ -281,6 +283,36 @@ def _mark_pending_messages_delivered(
                         file=sys.stderr,
                     )
     return errors
+
+
+def _collect_and_mark_messages(
+    table,
+    rows: list[dict],
+    *,
+    include_dreams: bool,
+    include_retired: bool,
+) -> tuple[list[tuple[dict, dict]], list[dict], list[str]]:
+    """Select and mark pending messages as one in-process transaction.
+
+    The deployment singleton prevents multiple Nephesh processes from writing
+    the same store, while this lock closes the concurrent-tool-call race inside
+    the process: only one context builder can claim a pending message.
+    """
+    with _MESSAGE_DELIVERY_LOCK:
+        pending_messages: list[tuple[dict, dict]] = []
+        other_rows: list[dict] = []
+        for row in rows:
+            meta = _metadata(row)
+            if meta.get("retired") and not include_retired:
+                continue
+            if not include_dreams and meta.get("historical_status") == "fictional_scene":
+                continue
+            if meta.get("type") == "message" and meta.get("delivered") is False:
+                pending_messages.append((row, meta))
+            else:
+                other_rows.append(row)
+        errors = _mark_pending_messages_delivered(table, pending_messages)
+        return pending_messages, other_rows, errors
 
 
 def _relative_time(dt: datetime, now: datetime) -> str:
@@ -829,27 +861,14 @@ async def memory_context(
     rows = repository.rows(table, total)
     now = datetime.now(timezone.utc)
 
-    # Pending messages (undelivered, type="message") are pulled out and
-    # ALWAYS included, regardless of salience ranking — the point of a
-    # message is that it gets seen, not that it competes for attention.
-    # The moment they're included here, they're marked delivered=True so
-    # they never resurface in a future context — surfacing once is the
-    # completion of the act, not a standing request for a reply.
-    pending_messages: list[tuple[dict, dict]] = []
-    other_rows: list[dict] = []
-    for r in rows:
-        meta = _metadata(r)
-        if meta.get("retired") and not include_retired:
-            continue
-        if (
-            not include_dreams
-            and meta.get("historical_status") == "fictional_scene"
-        ):
-            continue
-        if meta.get("type") == "message" and meta.get("delivered") is False:
-            pending_messages.append((r, meta))
-        else:
-            other_rows.append(r)
+    # Pending messages are selected and marked under one lock so two concurrent
+    # contexts cannot both present the same outbound note.
+    pending_messages, other_rows, delivery_errors = _collect_and_mark_messages(
+        table,
+        rows,
+        include_dreams=include_dreams,
+        include_retired=include_retired,
+    )
 
     scored = []
     for r in other_rows:
@@ -872,15 +891,6 @@ async def memory_context(
             # make a delivered note look permanently new.
             display_type = "life_event"
         by_type.setdefault(display_type, []).append((r, meta))
-
-    # Mark delivered now — the act of building this context IS the
-    # delivery (it's what gets injected into the next real session).
-    # Retries once on failure (LanceDB writes can race under concurrent
-    # calls — the plugin's passive fetch and an explicit tool call can
-    # land within the same second) and logs loudly rather than silently
-    # swallowing the error: an undetected failure here breaks the
-    # deliver-once guarantee the whole safety design depends on.
-    delivery_errors = _mark_pending_messages_delivered(table, pending_messages)
 
     # Real-clock grounding: time since the last actual conversation with
     # the primary companion (excluding historical imports), computed from
