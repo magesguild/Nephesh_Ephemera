@@ -136,7 +136,7 @@ class GuidancePublic(TypedDict, total=False):
     expires_at: str
     operation_id: str | None
     explicit: bool
-    projection_available: bool
+    projection_available: bool | None
 
 
 class GuidanceRequestResult(TypedDict, total=False):

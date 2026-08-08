@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
 
 import pytest
 
@@ -164,6 +165,27 @@ def test_concurrent_same_trigger_coalesces(tmp_path: Path) -> None:
     ids = {result["guidance_id"] for result in results if result is not None}
     assert len(ids) == 1
     assert len(store.latest()) == 1
+
+
+def _process_offer(args: tuple[str, str]):
+    path, operation_id = args
+    return GuidanceStore(path).create(
+        trigger="uncertain_operation",
+        text="uncertain",
+        explicit=False,
+        operation_id=operation_id,
+        projection_available=False,
+        policy=policy(cooldown_seconds=0),
+    )
+
+
+def test_concurrent_process_writers_coalesce(tmp_path: Path) -> None:
+    path = str(tmp_path / "guidance.jsonl")
+    with get_context("spawn").Pool(4) as pool:
+        results = pool.map(_process_offer, [(path, f"op-{i}") for i in range(4)])
+    ids = {result["guidance_id"] for result in results if result is not None}
+    assert len(ids) == 1
+    assert len(GuidanceStore(path).latest()) == 1
 
 
 def test_malformed_guidance_record_is_rejected(tmp_path: Path) -> None:
