@@ -211,3 +211,25 @@ def test_mcp_request_and_acknowledgement_do_not_write_memory(tmp_path: Path, mon
     )
     assert acknowledged["status"] == "recorded"
     assert not (tmp_path / "memories").exists()
+
+
+def test_presented_guidance_can_be_retried_after_delivery_window(tmp_path: Path) -> None:
+    store = GuidanceStore(tmp_path / "guidance.jsonl")
+    guidance = store.create(
+        trigger="explicit",
+        text="return marker",
+        explicit=True,
+        operation_id=None,
+        projection_available=False,
+        policy=policy(),
+    )
+    assert guidance is not None
+    first = store.present_pending()
+    assert first is not None
+    assert store.present_pending() is None
+
+    current = store.latest()[guidance["guidance_id"]]
+    old = dict(current)
+    old["presented_at"] = "2020-01-01T00:00:00+00:00"
+    store.append(old)
+    assert store.present_pending() is not None

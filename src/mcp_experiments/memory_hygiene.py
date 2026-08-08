@@ -66,7 +66,7 @@ def _parse(value: str | None) -> datetime | None:
         return None
 
 
-def guidance_text(trigger: str, *, projection_available: bool) -> str:
+def guidance_text(trigger: str, *, projection_available: bool | None) -> str:
     if trigger == "uncertain_operation":
         text = (
             "A durable operation has an uncertain outcome. You should record the "
@@ -90,6 +90,8 @@ def guidance_text(trigger: str, *, projection_available: bool) -> str:
             "for the task at hand before deciding what belongs in memory. Knowledge "
             "is a reference, not autobiography, and the search remains your choice."
         )
+    elif projection_available is None:
+        text += " Projection availability could not be determined, so check explicitly before relying on installed knowledge."
     return text
 
 
@@ -161,15 +163,21 @@ class GuidanceStore:
 
     def present_pending(self) -> dict[str, Any] | None:
         with self._lock, self._file_lock():
-            pending = [record for record in self._active_unlocked(_now())
-                        if record.get("state") == "pending"]
+            now = _now()
+            pending = [record for record in self._active_unlocked(now)
+                       if self._presentation_due(record, now)]
             if not pending:
                 return None
             current = sorted(pending, key=lambda r: r.get("created_at", ""))[-1]
             successor = dict(current)
-            successor.update({"state": "presented", "presented_at": _iso(_now())})
+            successor.update({"state": "pending", "presented_at": _iso(now)})
             self.append(successor)
             return self.public(successor)
+
+    @staticmethod
+    def _presentation_due(record: dict[str, Any], now: datetime) -> bool:
+        presented = _parse(record.get("presented_at"))
+        return presented is None or presented <= now - timedelta(minutes=5)
 
     def present(self, guidance_id: str) -> dict[str, Any]:
         with self._lock, self._file_lock():
@@ -185,7 +193,7 @@ class GuidanceStore:
                 self.append(successor)
                 raise GuidanceError(f"guidance '{guidance_id}' has expired")
             successor = dict(current)
-            successor.update({"state": "presented", "presented_at": _iso(_now())})
+            successor.update({"state": "pending", "presented_at": _iso(_now())})
             self.append(successor)
             return self.public(successor)
 

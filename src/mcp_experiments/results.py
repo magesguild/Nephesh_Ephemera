@@ -90,6 +90,7 @@ class MemoryIngestResult(TypedDict, total=False):
     operation: str | None
     allowed: list[str] | None
     guidance: dict[str, object] | None
+    guidance_error: str | None
 
 
 class MemoryAmendResult(TypedDict, total=False):
@@ -100,6 +101,7 @@ class MemoryAmendResult(TypedDict, total=False):
     error: str | None
     detail: dict[str, object] | None
     guidance: dict[str, object] | None
+    guidance_error: str | None
 
 
 class MemoryRetireResult(TypedDict, total=False):

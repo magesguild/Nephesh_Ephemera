@@ -31,11 +31,13 @@ _guidance_store = GuidanceStore(settings.memory_hygiene_state_file)
 _MESSAGE_DELIVERY_LOCK = threading.RLock()
 
 
-def _guidance_projection_available() -> bool:
+def _guidance_projection_available() -> bool | None:
     return projection_available(settings.projection_registry_file, repository.collections())
 
 
-def _automatic_guidance(trigger: str, operation_id: str | None) -> dict[str, Any] | None:
+def _automatic_guidance(
+    trigger: str, operation_id: str | None,
+) -> tuple[dict[str, Any] | None, str | None]:
     """Offer guidance after a durable event without affecting its outcome."""
     try:
         policy = GuidancePolicy.from_settings(settings)
@@ -48,10 +50,10 @@ def _automatic_guidance(trigger: str, operation_id: str | None) -> dict[str, Any
             projection_available=available,
             policy=policy,
         )
-        return _guidance_store.present(guidance["guidance_id"]) if guidance else None
+        return (_guidance_store.present(guidance["guidance_id"]), None) if guidance else (None, None)
     except (GuidanceError, OSError) as exc:
         print(f"memory hygiene guidance failed: {exc}", file=sys.stderr)
-        return None
+        return None, str(exc)
 
 
 def _pending_guidance() -> tuple[dict[str, Any] | None, str | None]:
@@ -287,11 +289,10 @@ def _mark_pending_messages_delivered(
 
 def _collect_and_mark_messages(
     table,
-    rows: list[dict],
     *,
     include_dreams: bool,
     include_retired: bool,
-) -> tuple[list[tuple[dict, dict]], list[dict], list[str]]:
+) -> tuple[list[tuple[dict, dict]], list[dict], list[str], list[dict]]:
     """Select and mark pending messages as one in-process transaction.
 
     The deployment singleton prevents multiple Nephesh processes from writing
@@ -299,6 +300,7 @@ def _collect_and_mark_messages(
     the process: only one context builder can claim a pending message.
     """
     with _MESSAGE_DELIVERY_LOCK:
+        rows = repository.rows(table, repository.count(table))
         pending_messages: list[tuple[dict, dict]] = []
         other_rows: list[dict] = []
         for row in rows:
@@ -312,7 +314,7 @@ def _collect_and_mark_messages(
             else:
                 other_rows.append(row)
         errors = _mark_pending_messages_delivered(table, pending_messages)
-        return pending_messages, other_rows, errors
+        return pending_messages, other_rows, errors, rows
 
 
 def _relative_time(dt: datetime, now: datetime) -> str:
@@ -581,7 +583,7 @@ async def memory_ingest(
         repository.transition_operation(
             operation, OperationState.UNCERTAIN, error="durable append failed",
         )
-        guidance = _automatic_guidance(
+        guidance, guidance_error = _automatic_guidance(
             "uncertain_operation",
             operation.operation_id if operation is not None else None,
         )
@@ -591,10 +593,11 @@ async def memory_ingest(
             "collection": name,
             "operation": "memory_ingest",
             "guidance": guidance,
+            "guidance_error": guidance_error,
         }
 
     repository.transition_operation(operation, OperationState.COMPLETED, memory_id=memory_id)
-    guidance = _automatic_guidance(
+    guidance, guidance_error = _automatic_guidance(
         "memory_amend" if source == "amendment" else "memory_ingest",
         operation.operation_id if operation is not None else None,
     )
@@ -607,6 +610,7 @@ async def memory_ingest(
         "importance": importance,
         "total_memories": repository.count(table),
         "guidance": guidance,
+        "guidance_error": guidance_error,
     }
 
 
@@ -858,17 +862,16 @@ async def memory_context(
     if total == 0:
         return empty
 
-    rows = repository.rows(table, total)
     now = datetime.now(timezone.utc)
 
     # Pending messages are selected and marked under one lock so two concurrent
     # contexts cannot both present the same outbound note.
-    pending_messages, other_rows, delivery_errors = _collect_and_mark_messages(
+    pending_messages, other_rows, delivery_errors, rows = _collect_and_mark_messages(
         table,
-        rows,
         include_dreams=include_dreams,
         include_retired=include_retired,
     )
+    total = len(rows)
 
     scored = []
     for r in other_rows:
@@ -1102,13 +1105,15 @@ async def memory_amend(
         repository.transition_operation(
             operation, OperationState.UNCERTAIN, error="successor memory was not stored",
         )
+        guidance, guidance_error = _automatic_guidance(
+            "uncertain_operation",
+            operation.operation_id if operation is not None else None,
+        )
         return {
             "error": "successor memory could not be stored",
             "detail": parsed,
-            "guidance": _automatic_guidance(
-                "uncertain_operation",
-                operation.operation_id if operation is not None else None,
-            ),
+            "guidance": guidance,
+            "guidance_error": guidance_error,
         }
 
     successor_id = parsed["id"]
@@ -1130,20 +1135,22 @@ async def memory_amend(
             successor_id=successor_id,
             error="successor stored but original not retired",
         )
+        guidance, guidance_error = _automatic_guidance(
+            "uncertain_operation",
+            operation.operation_id if operation is not None else None,
+        )
         return {
             "status": "uncertain",
             "error": "successor_stored_original_not_retired",
             "original_id": memory_id,
             "successor_id": successor_id,
-            "guidance": _automatic_guidance(
-                "uncertain_operation",
-                operation.operation_id if operation is not None else None,
-            ),
+            "guidance": guidance,
+            "guidance_error": guidance_error,
         }
     repository.transition_operation(
         operation, OperationState.COMPLETED, successor_id=successor_id,
     )
-    guidance = _automatic_guidance(
+    guidance, guidance_error = _automatic_guidance(
         "memory_amend", operation.operation_id if operation is not None else None,
     )
     return {
@@ -1152,6 +1159,7 @@ async def memory_amend(
         "successor_id": successor_id,
         "reason": retired_meta["supersession_reason"],
         "guidance": guidance,
+        "guidance_error": guidance_error,
     }
 
 
