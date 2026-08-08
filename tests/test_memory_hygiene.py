@@ -4,10 +4,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import get_context
+import asyncio
 
 import pytest
 
 from mcp_experiments.memory_hygiene import GuidanceError, GuidancePolicy, GuidanceStore, guidance_text
+from mcp_experiments.tools import guidance as guidance_tools
 
 
 def policy(**overrides: object) -> GuidancePolicy:
@@ -193,3 +195,19 @@ def test_malformed_guidance_record_is_rejected(tmp_path: Path) -> None:
     path.write_text("[1, 2, 3]\n")
     with pytest.raises(GuidanceError, match="invalid record"):
         GuidanceStore(path).latest()
+
+
+def test_mcp_request_and_acknowledgement_do_not_write_memory(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(guidance_tools, "_store", GuidanceStore(tmp_path / "guidance.jsonl"))
+    monkeypatch.setattr(guidance_tools, "_projection_available", lambda: False)
+    requested = asyncio.run(guidance_tools.memory_hygiene_guidance_request())
+    assert requested["status"] == "offered"
+    guidance = requested["guidance"]
+    assert guidance is not None
+    acknowledged = asyncio.run(
+        guidance_tools.memory_hygiene_guidance_acknowledge(
+            guidance["guidance_id"], "declined"
+        )
+    )
+    assert acknowledged["status"] == "recorded"
+    assert not (tmp_path / "memories").exists()
