@@ -89,6 +89,7 @@ class MemoryIngestResult(TypedDict, total=False):
     error: str | None
     operation: str | None
     allowed: list[str] | None
+    guidance: dict[str, object] | None
 
 
 class MemoryAmendResult(TypedDict, total=False):
@@ -98,6 +99,7 @@ class MemoryAmendResult(TypedDict, total=False):
     reason: str | None
     error: str | None
     detail: dict[str, object] | None
+    guidance: dict[str, object] | None
 
 
 class MemoryRetireResult(TypedDict, total=False):
@@ -119,6 +121,8 @@ class MemoryContextResult(TypedDict, total=False):
     message_quota: dict[str, object] | None
     delivery_state: str | None
     delivery_errors: list[str] | None
+    guidance: dict[str, object] | None
+    guidance_error: str | None
     context: str | None
 
 

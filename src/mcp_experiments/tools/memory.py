@@ -19,10 +19,61 @@ from typing import Any
 from ..compliance import ComplianceLevel
 from ..config import settings
 from ..kernel import KernelError, KernelStore
+from ..memory_hygiene import GuidanceError, GuidancePolicy, GuidanceStore, guidance_text, projection_available
 from ..projection import guard_memory_target
 from ..persistence import DurableWriteError, OperationState
 from ..results import MemoryAmendResult, MemoryContextResult, MemoryIngestResult, MemoryRecallResult, MemoryRetireResult, MemorySampleResult, ProvenanceAuditResult
 from .vector_db import repository
+
+
+_guidance_store = GuidanceStore(settings.memory_hygiene_state_file)
+
+
+def _guidance_projection_available() -> bool:
+    return projection_available(settings.projection_registry_file, repository.collections())
+
+
+def _automatic_guidance(trigger: str, operation_id: str | None) -> dict[str, Any] | None:
+    """Offer guidance after a durable event without affecting its outcome."""
+    try:
+        policy = GuidancePolicy.from_settings(settings)
+        available = _guidance_projection_available()
+        guidance = _guidance_store.create(
+            trigger=trigger,
+            text=guidance_text(trigger, projection_available=available),
+            explicit=False,
+            operation_id=operation_id,
+            projection_available=available,
+            policy=policy,
+        )
+        return _guidance_store.present(guidance["guidance_id"]) if guidance else None
+    except (GuidanceError, OSError) as exc:
+        print(f"memory hygiene guidance failed: {exc}", file=sys.stderr)
+        return None
+
+
+def _pending_guidance() -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        active = _guidance_store.active()
+        pending = _guidance_store.pending()
+        if pending:
+            return _guidance_store.present(pending[-1]["guidance_id"]), None
+        return None, None
+    except GuidanceError as exc:
+        print(f"memory hygiene guidance read failed: {exc}", file=sys.stderr)
+        return None, str(exc)
+
+
+def _guidance_block(guidance: dict[str, Any] | None, error: str | None = None) -> str:
+    if guidance:
+        return (
+            "\n## Memory-Hygiene Guidance\n\n"
+            f"*{guidance.get('text', '').strip()}*\n"
+            f"\nGuidance ID: `{guidance.get('guidance_id', '')}`\n"
+        )
+    if error:
+        return f"\n## Memory-Hygiene Guidance\n\n*Guidance could not be read: {error}*\n"
+    return ""
 
 MEMORY_TYPES = {
     "life_event",
@@ -499,14 +550,23 @@ async def memory_ingest(
         repository.transition_operation(
             operation, OperationState.UNCERTAIN, error="durable append failed",
         )
+        guidance = _automatic_guidance(
+            "uncertain_operation",
+            operation.operation_id if operation is not None else None,
+        )
         return {
             "status": "uncertain",
             "error": "durable_write_failed",
             "collection": name,
             "operation": "memory_ingest",
+            "guidance": guidance,
         }
 
     repository.transition_operation(operation, OperationState.COMPLETED, memory_id=memory_id)
+    guidance = _automatic_guidance(
+        "memory_amend" if source == "amendment" else "memory_ingest",
+        operation.operation_id if operation is not None else None,
+    )
 
     return {
         "status": "stored",
@@ -515,6 +575,7 @@ async def memory_ingest(
         "type": memory_type,
         "importance": importance,
         "total_memories": repository.count(table),
+        "guidance": guidance,
     }
 
 
@@ -719,6 +780,7 @@ async def memory_context(
     # Qualiant with no memories yet still has a self. A first session must
     # arrive as someone.
     kernel_text, kernel_meta = _kernel_block()
+    guidance, guidance_error = _pending_guidance()
     if limit <= 0:
         return {
             "collection": name,
@@ -729,7 +791,10 @@ async def memory_context(
             "message_quota": _message_quota([], datetime.now(timezone.utc), settings.message_daily_limit),
             "delivery_state": "settled",
             "delivery_errors": [],
+            "guidance": guidance,
+            "guidance_error": guidance_error,
             "context": (kernel_text + "\n" if kernel_text else "")
+            + _guidance_block(guidance, guidance_error)
             + "*limit must be greater than zero*",
         }
     # Every key, always — never a partial dict. MemoryContextResult is
@@ -748,7 +813,10 @@ async def memory_context(
         "message_quota": _message_quota([], datetime.now(timezone.utc), settings.message_daily_limit),
         "delivery_state": "settled",
         "delivery_errors": [],
+        "guidance": guidance,
+        "guidance_error": guidance_error,
         "context": (kernel_text + "\n" if kernel_text else "")
+        + _guidance_block(guidance, guidance_error)
         + "No memories stored yet. This is the beginning.",
     }
     if not repository.collection_exists(name):
@@ -856,6 +924,9 @@ async def memory_context(
             suffix = f" ({', '.join(parts)})" if parts else ""
             lines.append(f"- {r.get('text', '').strip()}{suffix}")
 
+    if guidance or guidance_error:
+        lines.append(_guidance_block(guidance, guidance_error))
+
     return {
         "collection": name,
         "memory_count": total,
@@ -865,6 +936,8 @@ async def memory_context(
         "message_quota": message_quota,
         "delivery_state": "uncertain" if delivery_errors else "settled",
         "delivery_errors": delivery_errors,
+        "guidance": guidance,
+        "guidance_error": guidance_error,
         "context": "\n".join(lines),
     }
 
@@ -1020,7 +1093,14 @@ async def memory_amend(
         repository.transition_operation(
             operation, OperationState.UNCERTAIN, error="successor memory was not stored",
         )
-        return {"error": "successor memory could not be stored", "detail": parsed}
+        return {
+            "error": "successor memory could not be stored",
+            "detail": parsed,
+            "guidance": _automatic_guidance(
+                "uncertain_operation",
+                operation.operation_id if operation is not None else None,
+            ),
+        }
 
     successor_id = parsed["id"]
     retired_meta = dict(old_meta)
@@ -1046,15 +1126,23 @@ async def memory_amend(
             "error": "successor_stored_original_not_retired",
             "original_id": memory_id,
             "successor_id": successor_id,
+            "guidance": _automatic_guidance(
+                "uncertain_operation",
+                operation.operation_id if operation is not None else None,
+            ),
         }
     repository.transition_operation(
         operation, OperationState.COMPLETED, successor_id=successor_id,
+    )
+    guidance = _automatic_guidance(
+        "memory_amend", operation.operation_id if operation is not None else None,
     )
     return {
         "status": "amended",
         "original_id": memory_id,
         "successor_id": successor_id,
         "reason": retired_meta["supersession_reason"],
+        "guidance": guidance,
     }
 
 

@@ -91,6 +91,7 @@ def nephesh_info() -> str:
             "kernel": settings.kernel_dir,
             "operation_ledger": settings.operation_ledger_file,
             "projection_registry": settings.projection_registry_file,
+            "memory_hygiene_guidance": settings.memory_hygiene_state_file,
         },
     }
 

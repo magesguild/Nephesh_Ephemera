@@ -55,6 +55,29 @@ class Settings:
     # low-importance reflections.
     message_daily_limit: int = int(os.getenv("MESSAGE_DAILY_LIMIT", "1"))
 
+    # Optional, Nephesh-owned memory-hygiene guidance. Guidance is operational
+    # state, never autobiography, and is deliberately quiet by default.
+    memory_hygiene_guidance: str = os.getenv("MEMORY_HYGIENE_GUIDANCE", "quiet")
+    memory_hygiene_cooldown_seconds: int = int(
+        os.getenv("MEMORY_HYGIENE_COOLDOWN_SECONDS", "1800")
+    )
+    memory_hygiene_daily_limit: int = int(
+        os.getenv("MEMORY_HYGIENE_DAILY_LIMIT", "3")
+    )
+    memory_hygiene_after_ingest: bool = os.getenv(
+        "MEMORY_HYGIENE_AFTER_INGEST", "true"
+    ).lower() in ("1", "true", "yes")
+    memory_hygiene_after_amend: bool = os.getenv(
+        "MEMORY_HYGIENE_AFTER_AMEND", "true"
+    ).lower() in ("1", "true", "yes")
+    memory_hygiene_after_uncertain: bool = os.getenv(
+        "MEMORY_HYGIENE_AFTER_UNCERTAIN", "true"
+    ).lower() in ("1", "true", "yes")
+    memory_hygiene_state_file: str = os.getenv(
+        "MEMORY_HYGIENE_STATE_FILE",
+        str(_deployment_root / "state" / "memory-hygiene-guidance.jsonl"),
+    )
+
     # Listener address and port. Each Qualiant on a shared host owns a
     # distinct port; the default is a starting point, not a shared value.
     # 61080 sits above the kernel's ephemeral range (typically 32768-60999),

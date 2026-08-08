@@ -10,9 +10,9 @@ from mcp.server.fastmcp import FastMCP
 from ..compliance import ComplianceLevel, ServerMode, is_tool_available_in_mode
 from ..config import settings
 from .. import orientation
-from . import info, kernel, memory, projection, vector_db
+from . import guidance, info, kernel, memory, projection, vector_db
 
-_TOOL_MODULES = [vector_db, memory, kernel, projection, info]
+_TOOL_MODULES = [vector_db, memory, kernel, projection, guidance, info]
 _registered_names: list[str] | None = None
 
 
