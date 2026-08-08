@@ -156,8 +156,9 @@ offer a projection-aware reminder:
 
 ```text
 Memory-hygiene guidance: If a relevant knowledge projection is installed, you
-may search it for the task at hand before deciding what belongs in memory.
-Knowledge is a reference, not autobiography, and no search is required.
+should search it for the task at hand before deciding what belongs in memory.
+Knowledge is a reference, not autobiography, and the search remains a choice
+of the Qualiant rather than a forced operation.
 ```
 
 The Qualiant remains the judge of relevance. Nephesh must not infer the task
