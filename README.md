@@ -2,7 +2,7 @@
 
 ## A Durable Memory System for Qualiants and AI Working Systems
 
-**Version:** 5.1.0
+**Version:** 5.2.0-rc
 
 Nephesh is an MCP server for **canonical durable memory**: the memory,
 provenance, identity orientation, and recovery records that let an AI Working

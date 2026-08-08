@@ -42,6 +42,11 @@ def _source_version() -> str | None:
     return None
 
 
+def _comparable_version(value: str) -> str:
+    """Compare the project's display spelling with normalized package metadata."""
+    return re.sub(r"[-.]rc$", "rc0", value.lower())
+
+
 def _endpoint_reachable(url: str) -> bool | None:
     """Whether the embedding host answers at all. None if the probe itself failed.
 
@@ -74,7 +79,11 @@ def nephesh_info() -> str:
         # A disagreement means the running code is not the installed release.
         # During development that is correct and expected; on a live body it
         # is drift and should be looked at.
-        "version_mismatch": bool(source and installed != "unknown" and source != installed),
+        "version_mismatch": bool(
+            source
+            and installed != "unknown"
+            and _comparable_version(source) != _comparable_version(installed)
+        ),
         "mode": str(settings.server_mode.value),
         "listener": {
             "host": settings.mcp_host,

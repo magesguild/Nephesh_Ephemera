@@ -1,7 +1,8 @@
 # Nephesh Design
 
-**Version:** 5.1.0
-**Status:** Current. This describes what Nephesh is, not what was proposed.
+**Version:** 5.2.0-rc
+**Status:** Release-candidate design. This describes the current branch, not a
+mainline release.
 
 This is the single design document for Nephesh. It consolidates seven scattered
 records — the 2026-08-05 design, the architecture map, the rebuild plan, the
@@ -269,7 +270,8 @@ what is actually there. Recorded-active with the collection gone reports
 `orphaned`; a rollback to a target whose collection is absent is refused rather
 than silently minting an empty collection and calling it live.
 
-Activation authority is **recorded and explicitly not enforceable** in 5.1.0.
+Activation authority is **recorded and explicitly not enforceable** in this
+release candidate.
 That is written into the schema rather than implied, because a limit you have
 not stated is a limit nobody can plan around.
 

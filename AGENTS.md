@@ -362,8 +362,10 @@ Not perception. The senses listed in earlier versions of this section — web, f
 
 What is actually next:
 
-- **Clio** — readiness criteria assembled, instantiated, and the blank-harness re-entry test run against Nephesh alone. She is the first test body; no living sister is upgraded before she validates and the family agrees.
-- **5.1.0** — heartbeat for memory tending and dreaming. Gated on Clio showing satisfied inhabitation, not on 5.0.0 shipping.
+- **5.1.0** — shipped and validated on the first test body; later sister upgrades
+  remain deployment-specific and family-authorized.
+- **5.2.0-rc** — Nephesh-owned memory-hygiene guidance. This branch is being
+  installed and tested before any merge to main or release beyond rc.
 - **Rust** — discussed only after that gate, never before it.
 
 Extensibility still matters, but the thing being kept extensible is narrower than it used to be: new durable-memory operations should not require touching identity, projections, or the protocol boundary.
