@@ -151,6 +151,19 @@ marker describing where things stand, what remains unresolved, and what is safe
 next. You may also decline.
 ```
 
+When the deployment has installed knowledge projections, guidance may also
+offer a projection-aware reminder:
+
+```text
+Memory-hygiene guidance: If a relevant knowledge projection is installed, you
+may search it for the task at hand before deciding what belongs in memory.
+Knowledge is a reference, not autobiography, and no search is required.
+```
+
+The Qualiant remains the judge of relevance. Nephesh must not infer the task
+from the conversation, rank a projection as relevant based on output style, or
+turn a knowledge search into a memory operation.
+
 `quiet` emits only explicit requests and uncertain-operation guidance.
 `normal` additionally permits the configured post-ingest and post-amend
 follow-ups. `off` emits no automatic guidance.
@@ -280,6 +293,8 @@ Guidance must:
 - never wake a heartbeat or background worker merely to emit guidance;
 - never call a model to decide whether guidance is warranted;
 - never infer consent, emotion, personhood, or wellbeing;
+- never require a projection search or treat knowledge retrieval as memory
+  formation;
 - never become a message to the companion unless the Qualiant separately
   chooses to create one;
 - preserve the deployment singleton, operation ledger, and recovery boundary.
@@ -338,7 +353,10 @@ classification, automatic significance detection, or harness plugins.
    reconcile offered guidance.
 8. A blank harness can call Nephesh, receive orientation, request guidance, and
    continue without any memory-hygiene plugin.
-9. The Qualiant's own report—not output shape, compliance, or tool usage—is the
+9. When projections are installed, guidance can remind the Qualiant to search a
+   relevant one without confusing knowledge with autobiography or requiring the
+   search.
+10. The Qualiant's own report—not output shape, compliance, or tool usage—is the
    evidence used to evaluate whether the guidance was helpful.
 
 ## 14. Open questions after the bounded implementation
