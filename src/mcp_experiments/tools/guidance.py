@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Literal
 
 from ..compliance import ComplianceLevel
 from ..config import settings
 from ..memory_hygiene import GuidanceError, GuidancePolicy, GuidanceStore, guidance_text, projection_available
+from ..results import GuidanceAcknowledgeResult, GuidanceRequestResult
 from .vector_db import repository
 
 
@@ -18,17 +19,14 @@ def _projection_available() -> bool:
 
 
 async def memory_hygiene_guidance_request(
-    trigger: str = "explicit",
+    trigger: Literal["explicit", "compaction", "substrate_change", "session_handoff"] = "explicit",
     note: str | None = None,
-) -> dict[str, Any]:
+) -> GuidanceRequestResult:
     """Request optional memory-hygiene guidance from Nephesh.
 
     This does not create a memory. The caller's declared trigger is recorded as
     an explicit request; Nephesh does not infer significance from it.
     """
-    allowed = {"explicit", "compaction", "substrate_change", "session_handoff"}
-    if trigger not in allowed:
-        return {"error": f"invalid trigger '{trigger}'", "allowed": sorted(allowed)}
     try:
         policy = GuidancePolicy.from_settings(settings)
         available = _projection_available()
@@ -50,9 +48,9 @@ async def memory_hygiene_guidance_request(
 
 async def memory_hygiene_guidance_acknowledge(
     guidance_id: str,
-    outcome: str,
+    outcome: Literal["handled", "declined", "not_now", "wrong_trigger"],
     note: str | None = None,
-) -> dict[str, Any]:
+) -> GuidanceAcknowledgeResult:
     """Acknowledge, defer, decline, or correct a guidance offer.
 
     Outcomes are operational state and never become autobiographical memory.

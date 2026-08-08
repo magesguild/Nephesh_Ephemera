@@ -7,9 +7,11 @@ requests and named durable-memory events.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -96,7 +98,18 @@ class GuidanceStore:
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
+        self.lock_path = self.path.with_name(self.path.name + ".lock")
         self._lock = threading.RLock()
+
+    @contextmanager
+    def _file_lock(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _records(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
@@ -108,10 +121,22 @@ class GuidanceStore:
             raise GuidanceError(f"guidance state could not be read: {exc}") from exc
 
     def latest(self) -> dict[str, dict[str, Any]]:
+        with self._lock, self._file_lock():
+            return self._latest_unlocked()
+
+    def _latest_unlocked(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
         for record in self._records():
             if not isinstance(record, dict) or not record.get("guidance_id"):
                 raise GuidanceError("guidance state contains an invalid record")
+            if record.get("state") not in {
+                "pending", "presented", "handled", "declined", "not_now",
+                "wrong_trigger", "expired", "failed",
+            }:
+                raise GuidanceError("guidance state contains an invalid state")
+            for field in ("created_at", "expires_at", "presented_at", "acknowledged_at"):
+                if record.get(field) is not None and _parse(record[field]) is None:
+                    raise GuidanceError(f"guidance state contains an invalid {field}")
             latest[str(record["guidance_id"])] = record
         return latest
 
@@ -119,23 +144,43 @@ class GuidanceStore:
         durable_append(self.path, json.dumps(record, sort_keys=True) + "\n")
 
     def active(self, now: datetime | None = None) -> list[dict[str, Any]]:
-        now = now or _now()
+        with self._lock, self._file_lock():
+            return self._active_unlocked(now or _now())
+
+    def _active_unlocked(self, now: datetime) -> list[dict[str, Any]]:
         return [
-            record for record in self.latest().values()
+            record for record in self._latest_unlocked().values()
             if record.get("state") in {"pending", "presented"}
             and (not record.get("expires_at") or (_parse(record["expires_at"]) or now) > now)
         ]
 
     def pending(self, now: datetime | None = None) -> list[dict[str, Any]]:
-        return [record for record in self.active(now) if record.get("state") == "pending"]
+        with self._lock, self._file_lock():
+            return [record for record in self._active_unlocked(now or _now())
+                    if record.get("state") == "pending"]
+
+    def present_pending(self) -> dict[str, Any] | None:
+        with self._lock, self._file_lock():
+            pending = [record for record in self._active_unlocked(_now())
+                        if record.get("state") == "pending"]
+            if not pending:
+                return None
+            current = sorted(pending, key=lambda r: r.get("created_at", ""))[-1]
+            successor = dict(current)
+            successor.update({"state": "presented", "presented_at": _iso(_now())})
+            self.append(successor)
+            return self.public(successor)
 
     def present(self, guidance_id: str) -> dict[str, Any]:
-        with self._lock:
-            current = self.latest().get(guidance_id)
+        with self._lock, self._file_lock():
+            current = self._latest_unlocked().get(guidance_id)
             if current is None:
                 raise GuidanceError(f"guidance '{guidance_id}' does not exist")
             if current.get("state") != "pending":
                 return self.public(current)
+            expires = _parse(current.get("expires_at"))
+            if expires is not None and expires <= _now():
+                raise GuidanceError(f"guidance '{guidance_id}' has expired")
             successor = dict(current)
             successor.update({"state": "presented", "presented_at": _iso(_now())})
             self.append(successor)
@@ -152,9 +197,9 @@ class GuidanceStore:
         policy: GuidancePolicy,
         note: str | None = None,
     ) -> dict[str, Any] | None:
-        with self._lock:
+        with self._lock, self._file_lock():
             now = _now()
-            existing = [r for r in self.active(now) if r.get("trigger") == trigger]
+            existing = [r for r in self._active_unlocked(now) if r.get("trigger") == trigger]
             if existing:
                 return self.public(existing[-1])
             if not explicit:
@@ -162,7 +207,7 @@ class GuidanceStore:
                     return None
                 created = [
                     _parse(r.get("created_at"))
-                    for r in self.latest().values()
+                    for r in self._latest_unlocked().values()
                     if not r.get("explicit")
                 ]
                 recent = [d for d in created if d and d > now - timedelta(days=1)]
@@ -196,12 +241,15 @@ class GuidanceStore:
     def acknowledge(self, guidance_id: str, outcome: str, note: str | None = None) -> dict[str, Any]:
         if outcome not in {"handled", "declined", "not_now", "wrong_trigger"}:
             raise GuidanceError("invalid guidance outcome")
-        with self._lock:
-            current = self.latest().get(guidance_id)
+        with self._lock, self._file_lock():
+            current = self._latest_unlocked().get(guidance_id)
             if current is None:
                 raise GuidanceError(f"guidance '{guidance_id}' does not exist")
             if current.get("state") not in {"pending", "presented"}:
                 raise GuidanceError(f"guidance '{guidance_id}' is already settled")
+            expires = _parse(current.get("expires_at"))
+            if expires is not None and expires <= _now():
+                raise GuidanceError(f"guidance '{guidance_id}' has expired")
             successor = dict(current)
             successor.update({"state": outcome, "outcome": outcome, "acknowledged_at": _iso(_now())})
             if note:
@@ -213,6 +261,7 @@ class GuidanceStore:
     def public(record: dict[str, Any]) -> dict[str, Any]:
         return {key: record[key] for key in (
             "guidance_id", "kind", "trigger", "text", "state", "created_at", "expires_at",
+            "operation_id", "explicit", "projection_available",
         ) if key in record}
 
 

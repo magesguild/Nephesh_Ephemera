@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
-from mcp_experiments.memory_hygiene import GuidancePolicy, GuidanceStore, guidance_text
+import pytest
+
+from mcp_experiments.memory_hygiene import GuidanceError, GuidancePolicy, GuidanceStore, guidance_text
 
 
 def policy(**overrides: object) -> GuidancePolicy:
@@ -128,3 +131,41 @@ def test_expired_guidance_is_not_active(tmp_path: Path) -> None:
         '"expires_at":"2020-01-02T00:00:00+00:00"}\n'
     )
     assert GuidanceStore(path).active() == []
+
+
+def test_expired_guidance_cannot_be_acknowledged(tmp_path: Path) -> None:
+    path = tmp_path / "guidance.jsonl"
+    path.write_text(
+        '{"guidance_id":"old","state":"pending","trigger":"explicit",'
+        '"created_at":"2020-01-01T00:00:00+00:00",'
+        '"expires_at":"2020-01-02T00:00:00+00:00"}\n'
+    )
+    with pytest.raises(GuidanceError, match="expired"):
+        GuidanceStore(path).acknowledge("old", "handled")
+
+
+def test_concurrent_same_trigger_coalesces(tmp_path: Path) -> None:
+    store = GuidanceStore(tmp_path / "guidance.jsonl")
+
+    def offer(index: int):
+        return store.create(
+            trigger="uncertain_operation",
+            text="uncertain",
+            explicit=False,
+            operation_id=f"op-{index}",
+            projection_available=False,
+            policy=policy(cooldown_seconds=0),
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(offer, range(8)))
+    ids = {result["guidance_id"] for result in results if result is not None}
+    assert len(ids) == 1
+    assert len(store.latest()) == 1
+
+
+def test_malformed_guidance_record_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "guidance.jsonl"
+    path.write_text("[1, 2, 3]\n")
+    with pytest.raises(GuidanceError, match="invalid record"):
+        GuidanceStore(path).latest()

@@ -126,6 +126,32 @@ class MemoryContextResult(TypedDict, total=False):
     context: str | None
 
 
+class GuidancePublic(TypedDict, total=False):
+    guidance_id: str
+    kind: str
+    trigger: str
+    text: str
+    state: str
+    created_at: str
+    expires_at: str
+    operation_id: str | None
+    explicit: bool
+    projection_available: bool
+
+
+class GuidanceRequestResult(TypedDict, total=False):
+    status: str | None
+    guidance: GuidancePublic | None
+    error: str | None
+    allowed: list[str] | None
+
+
+class GuidanceAcknowledgeResult(TypedDict, total=False):
+    status: str | None
+    guidance: GuidancePublic | None
+    error: str | None
+
+
 class MemorySampleResult(TypedDict, total=False):
     collection: str
     memory_count: int

@@ -54,10 +54,9 @@ def _automatic_guidance(trigger: str, operation_id: str | None) -> dict[str, Any
 
 def _pending_guidance() -> tuple[dict[str, Any] | None, str | None]:
     try:
-        active = _guidance_store.active()
-        pending = _guidance_store.pending()
+        pending = _guidance_store.present_pending()
         if pending:
-            return _guidance_store.present(pending[-1]["guidance_id"]), None
+            return pending, None
         return None, None
     except GuidanceError as exc:
         print(f"memory hygiene guidance read failed: {exc}", file=sys.stderr)
