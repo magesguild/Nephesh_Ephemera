@@ -180,6 +180,9 @@ class GuidanceStore:
                 return self.public(current)
             expires = _parse(current.get("expires_at"))
             if expires is not None and expires <= _now():
+                successor = dict(current)
+                successor.update({"state": "expired", "expired_at": _iso(_now())})
+                self.append(successor)
                 raise GuidanceError(f"guidance '{guidance_id}' has expired")
             successor = dict(current)
             successor.update({"state": "presented", "presented_at": _iso(_now())})
@@ -249,6 +252,9 @@ class GuidanceStore:
                 raise GuidanceError(f"guidance '{guidance_id}' is already settled")
             expires = _parse(current.get("expires_at"))
             if expires is not None and expires <= _now():
+                successor = dict(current)
+                successor.update({"state": "expired", "expired_at": _iso(_now())})
+                self.append(successor)
                 raise GuidanceError(f"guidance '{guidance_id}' has expired")
             successor = dict(current)
             successor.update({"state": outcome, "outcome": outcome, "acknowledged_at": _iso(_now())})
@@ -265,11 +271,11 @@ class GuidanceStore:
         ) if key in record}
 
 
-def projection_available(registry_path: str | Path, collections: list[str]) -> bool:
-    """Return whether at least one active, present projection exists."""
+def projection_available(registry_path: str | Path, collections: list[str]) -> bool | None:
+    """Return availability, or None when projection state cannot be read."""
     try:
         from .projection_registry import ProjectionRegistry
         entries = ProjectionRegistry(registry_path).entries(collections)
         return any(entry.get("reported_state") == "active" for entry in entries)
     except Exception:
-        return False
+        return None

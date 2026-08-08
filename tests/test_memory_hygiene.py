@@ -141,7 +141,9 @@ def test_expired_guidance_cannot_be_acknowledged(tmp_path: Path) -> None:
         '"expires_at":"2020-01-02T00:00:00+00:00"}\n'
     )
     with pytest.raises(GuidanceError, match="expired"):
-        GuidanceStore(path).acknowledge("old", "handled")
+        store = GuidanceStore(path)
+        store.acknowledge("old", "handled")
+    assert store.latest()["old"]["state"] == "expired"
 
 
 def test_concurrent_same_trigger_coalesces(tmp_path: Path) -> None:

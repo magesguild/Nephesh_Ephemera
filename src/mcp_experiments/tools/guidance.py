@@ -42,7 +42,7 @@ async def memory_hygiene_guidance_request(
         if guidance:
             guidance = _store.present(guidance["guidance_id"])
         return {"status": "offered", "guidance": guidance}
-    except GuidanceError as exc:
+    except (GuidanceError, OSError) as exc:
         return {"error": str(exc)}
 
 
@@ -60,7 +60,7 @@ async def memory_hygiene_guidance_acknowledge(
             "status": "recorded",
             "guidance": _store.acknowledge(guidance_id, outcome, note),
         }
-    except GuidanceError as exc:
+    except (GuidanceError, OSError) as exc:
         return {"error": str(exc)}
 
 

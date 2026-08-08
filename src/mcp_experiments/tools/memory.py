@@ -58,7 +58,7 @@ def _pending_guidance() -> tuple[dict[str, Any] | None, str | None]:
         if pending:
             return pending, None
         return None, None
-    except GuidanceError as exc:
+    except (GuidanceError, OSError) as exc:
         print(f"memory hygiene guidance read failed: {exc}", file=sys.stderr)
         return None, str(exc)
 
