@@ -73,7 +73,7 @@ class InstallerUnitTests(unittest.TestCase):
                 installer.require_supported_linux()
 
     def test_source_version_is_read_from_the_release_source(self) -> None:
-        self.assertEqual(source_version(Path.cwd()), "5.3.3")
+        self.assertEqual(source_version(Path.cwd()), "5.3.5")
 
     def test_source_identity_requires_the_active_upstream_repository(self) -> None:
         identity = source_identity(active_source_root())

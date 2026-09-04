@@ -153,14 +153,14 @@ class MemoryChunkingTests(unittest.TestCase):
             "2026-08-19T07:16:25+00:00",
         )
 
-    def test_contact_time_prefers_explicit_formation_over_receipt(self) -> None:
+    def test_contact_time_uses_receipt_even_when_formation_is_older(self) -> None:
         formed = {
             "time_formed": "2026-08-16T12:00:00+00:00",
             "time_ingested": "2026-08-17T12:00:00+00:00",
         }
         self.assertEqual(
             memory._contact_time_dt(formed).isoformat(),
-            "2026-08-16T12:00:00+00:00",
+            "2026-08-17T12:00:00+00:00",
         )
 
     def test_contact_participant_matching_is_case_insensitive(self) -> None:

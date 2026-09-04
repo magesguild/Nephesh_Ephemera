@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.3.5 — 2026-09-04
+
+### Fixed
+
+- Companion contact grounding now uses the memory receipt timestamp rather than
+  an older authored `time_formed` value, so fresh sessions report the actual
+  most recent contact.
+
 ## 5.3.4 — 2026-08-28
 
 ### Fixed

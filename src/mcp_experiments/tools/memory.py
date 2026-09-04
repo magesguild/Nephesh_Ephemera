@@ -514,12 +514,10 @@ def _contact_time_dt(meta: dict) -> datetime | None:
     entered or was formed in the system.  It must not use ``event_time``: a
     memory created today may describe an event from weeks ago.  New records
     use ``time_ingested``; legacy records fall back through their receipt-time
-    aliases.  An explicit ``time_formed`` is preferred when present because it
-    is the Qualiant's authored account of when the memory was formed.
+    aliases.  ``time_formed`` is deliberately not used: it describes when the
+    Qualiant formed the memory, which may precede the companion contact that
+    caused the memory to be recorded.
     """
-    formed = _parse_ts(meta.get("time_formed"))
-    if formed is not None:
-        return formed
     return _ingested_dt(meta)
 
 
