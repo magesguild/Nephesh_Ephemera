@@ -14,6 +14,7 @@ import scripts.nephesh_installer as installer
 from scripts.nephesh_installer import (
     backup_existing,
     agent_name_from_kernel,
+    instance_lock_path,
     DEFAULT_KERNEL,
     MANIFEST_NAME,
     UNIT_NAME,
@@ -73,7 +74,7 @@ class InstallerUnitTests(unittest.TestCase):
                 installer.require_supported_linux()
 
     def test_source_version_is_read_from_the_release_source(self) -> None:
-        self.assertEqual(source_version(Path.cwd()), "5.3.5")
+        self.assertEqual(source_version(Path.cwd()), "5.3.6")
 
     def test_source_identity_requires_the_active_upstream_repository(self) -> None:
         identity = source_identity(active_source_root())
@@ -221,6 +222,52 @@ class InstallerUnitTests(unittest.TestCase):
             root.mkdir()
             self.assertIsNone(backup_existing(root, root / "backups", dry_run=False))
             self.assertFalse((root / "backups").exists())
+
+    def test_backup_never_archives_the_live_instance_lock(self) -> None:
+        # Windows regression: the running server holds an msvcrt byte-range
+        # lock on the instance lock, so copying it raises ERROR_LOCK_VIOLATION
+        # and the whole upgrade aborts. The lock is process-held ephemeral
+        # state, not durable content, and must be skipped in the snapshot.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "nephesh"
+            (root / "current").mkdir(parents=True)
+            (root / "config").mkdir()
+            (root / "data").mkdir()
+            state = root / "state"
+            state.mkdir()
+            lock = state / "nephesh-instance.lock"
+            lock.write_text(f"pid=4242\n", encoding="utf-8")
+            marker = state / "operations.jsonl"
+            marker.write_text("{}\n", encoding="utf-8")
+
+            destination = backup_existing(root, root / "backups", dry_run=False)
+
+            self.assertIsNotNone(destination)
+            copied = destination / "state"
+            self.assertTrue((copied / "operations.jsonl").exists())
+            self.assertFalse((copied / "nephesh-instance.lock").exists())
+
+    def test_backup_skips_a_custom_configured_instance_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "nephesh"
+            (root / "current").mkdir(parents=True)
+            (root / "config").mkdir()
+            (root / "data").mkdir()
+            state = root / "state"
+            state.mkdir()
+            custom = state / "custom.lock"
+            custom.write_text("pid=7\n", encoding="utf-8")
+            marker = state / "operations.jsonl"
+            marker.write_text("{}\n", encoding="utf-8")
+            config = root / "config" / "nephesh.env"
+            config.write_text(f"NEPHESH_INSTANCE_LOCK_FILE={custom}\n", encoding="utf-8")
+
+            destination = backup_existing(root, root / "backups", dry_run=False)
+
+            self.assertEqual(instance_lock_path(root), custom.resolve())
+            self.assertIsNotNone(destination)
+            self.assertTrue((destination / "state" / "operations.jsonl").exists())
+            self.assertFalse((destination / "state" / "custom.lock").exists())
 
     def test_unit_can_be_installed_into_isolated_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

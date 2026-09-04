@@ -23,7 +23,13 @@ from pathlib import Path
 
 try:
     from scripts import windows_runtime
-except ModuleNotFoundError:  # direct ``python scripts/nephesh_installer.py`` entrypoint
+except (ModuleNotFoundError, ImportError):
+    # Running the file directly (``python scripts/nephesh_installer.py``) puts the
+    # scripts directory on sys.path rather than the repo root, so the package
+    # import above cannot resolve. On Windows a venv's case-folded ``Scripts``
+    # bin directory can be picked up first as a ``scripts`` namespace package,
+    # which fails with ImportError rather than ModuleNotFoundError, so the
+    # fallback below must handle both.
     import windows_runtime
 
 if os.name == "nt":
@@ -392,12 +398,44 @@ def source_ignore(directory: str, names: list[str]) -> set[str]:
     }
 
 
+def instance_lock_path(root: Path) -> Path:
+    """Resolve the live-instance lock file, honoring configuration.
+
+    The lock is process-held ephemeral state: the server writes a pid marker
+    and holds an OS advisory lock against a second instance. It is not durable
+    content, so backups must not archive it. On Windows the live server's
+    msvcrt byte-range lock additionally makes any read of the locked byte fail
+    with ERROR_LOCK_VIOLATION, so an installer upgrading over a running
+    instance would otherwise abort inside the backup step.
+    """
+    for name in (".env", "nephesh.env"):
+        config = root / "config" / name
+        if not config.is_file():
+            continue
+        for line in config.read_text(encoding="utf-8").splitlines():
+            if line.startswith("NEPHESH_INSTANCE_LOCK_FILE="):
+                value = line.split("=", 1)[1].strip().strip('"')
+                if value:
+                    lock = Path(value)
+                    if lock.is_absolute():
+                        return lock.resolve()
+                    return (root / lock).resolve()
+    return (root / "state" / "nephesh-instance.lock").resolve()
+
+
 def backup_existing(root: Path, backup_root: Path, *, dry_run: bool) -> Path | None:
     if not root.exists():
         return None
     durable = (root / "current", root / "config", root / "data", root / "state")
     if not any(path.exists() for path in durable):
         return None
+    live_lock = instance_lock_path(root)
+
+    def ignore_locked(entries_dir: str, names: list[str]) -> set[str]:
+        # The live instance lock is process-held state, never durable content.
+        base = Path(entries_dir).resolve()
+        return {name for name in names if (base / name) == live_lock}
+
     stamp = utc_stamp()
     destination = backup_root / stamp
     if dry_run:
@@ -412,7 +450,7 @@ def backup_existing(root: Path, backup_root: Path, *, dry_run: bool) -> Path | N
         if source.is_symlink():
             target.symlink_to(os.readlink(source))
         elif source.is_dir():
-            shutil.copytree(source, target, symlinks=True)
+            shutil.copytree(source, target, symlinks=True, ignore=ignore_locked)
         else:
             shutil.copy2(source, target)
     return destination

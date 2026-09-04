@@ -4,11 +4,12 @@ import asyncio
 import json
 import tempfile
 import unittest
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import patch
 
 from mcp_experiments.config import settings
-from mcp_experiments.tools.info import _source_version, nephesh_info, nephesh_recovery_report
+from mcp_experiments.tools.info import _source_version, nephesh_info, nephesh_recovery_report, truthful_floor
 from mcp_experiments.server import _health_status
 
 
@@ -45,6 +46,13 @@ class SourceVersionTests(unittest.TestCase):
              patch("mcp_experiments.tools.info._endpoint_reachable", return_value=None):
             info = json.loads(nephesh_info())
         self.assertFalse(info["version_mismatch"])
+
+    def test_truthful_floor_uses_source_when_distribution_metadata_is_missing(self) -> None:
+        with patch("mcp_experiments.tools.info.version", side_effect=PackageNotFoundError), \
+             patch("mcp_experiments.tools.info._source_version", return_value="5.3.6"), \
+             patch("mcp_experiments.tools.info._endpoint_reachable", return_value=None):
+            floor = truthful_floor()
+        self.assertEqual(floor["version"], "5.3.6")
 
 
 class ShapeTests(unittest.TestCase):

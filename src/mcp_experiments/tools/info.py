@@ -60,6 +60,14 @@ def _source_version() -> str | None:
     return None
 
 
+def _installed_version() -> str:
+    """Return installed distribution metadata without breaking source runs."""
+    try:
+        return version("nephesh")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def _endpoint_reachable(url: str) -> bool | None:
     """Whether the embedding host answers at all. None if the probe itself failed.
 
@@ -216,15 +224,14 @@ def truthful_floor(*, process_reachable: bool | None = None,
     except Exception as exc:
         checks["projection_drift"] = _check("failed", reason=str(exc), source="projection_registry_and_store_read")
 
-    return {"version": "5.3.3-truthful-floor", "checks": checks}
+    installed = _installed_version()
+    source = _source_version()
+    return {"version": source or installed, "checks": checks}
 
 
 def nephesh_info() -> str:
     """Report what this deployment actually is, and whether it is whole."""
-    try:
-        installed = version("nephesh")
-    except PackageNotFoundError:
-        installed = "unknown"
+    installed = _installed_version()
     source = _source_version()
 
     info: dict[str, Any] = {

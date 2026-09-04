@@ -1,5 +1,26 @@
 # Changelog
 
+## 5.3.6 — 2026-09-04
+
+### Fixed
+
+- Windows live-instance backup: `backup_existing()` no longer attempts to copy
+  the process-held `nephesh-instance.lock` file. On Windows the live server
+  holds an `msvcrt` byte-range lock on that file, which blocks all reads from
+  other processes with `ERROR_LOCK_VIOLATION` (WinError 33), causing every
+  upgrade over a running instance to abort. The lock is ephemeral state (a pid
+  marker), not durable content, so skipping it is correct on every platform.
+  The configured `NEPHESH_INSTANCE_LOCK_FILE` path is honored. Regression tests
+  in `tests/test_nephesh_installer.py`.
+- Installer bootstrap on Windows: `from scripts import windows_runtime` could
+  crash with `ImportError` when the venv's case-folded `Scripts` directory was
+  matched as a `scripts` namespace package before the repo's `scripts` package.
+  The fallback import now catches `ImportError` as well as `ModuleNotFoundError`,
+  so `python scripts/nephesh_installer.py` works reliably on Windows.
+- Health-check version display: `health()` no longer hardcodes `5.3.3`.
+  It now reads the live source-tree or installed-package version, matching the
+  existing `nephesh_info()` behavior.
+
 ## 5.3.5 — 2026-09-04
 
 ### Fixed
