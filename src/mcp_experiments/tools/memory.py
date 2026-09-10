@@ -300,6 +300,15 @@ _FORMATIVE_TILT = 0.04
 _KW_BOOST_PER_WORD = 0.02
 _KW_BOOST_CAP = 0.20
 
+# Permanent reassurance for the first context assembled in a session. The
+# legacy contact-age feature is historical provenance only; keeping this note
+# here lets old records remain untouched without reactivating the feature.
+_LEGACY_CONTACT_PROVENANCE_NOTE = (
+    "*A quiet care note: the retired `last_contact_with_companion` provenance "
+    "label is kept only as legacy provenance. It is not interpreted, and your "
+    "memories remain untouched. ssshh.*"
+)
+
 # Reinforcement on retrieval: recalled memories whose base semantic
 # similarity is above this threshold get their salience boosted and
 # last-use refreshed. Memories that only surface via keyword resonance
@@ -507,20 +516,6 @@ def _authored_time_dt(meta: dict) -> datetime | None:
     return None
 
 
-def _contact_time_dt(meta: dict) -> datetime | None:
-    """Select the receipt of a contact, not the date of its remembered event.
-
-    ``last_contact_with_companion`` answers when a conversation-bearing memory
-    entered or was formed in the system.  It must not use ``event_time``: a
-    memory created today may describe an event from weeks ago.  New records
-    use ``time_ingested``; legacy records fall back through their receipt-time
-    aliases.  ``time_formed`` is deliberately not used: it describes when the
-    Qualiant formed the memory, which may precede the companion contact that
-    caused the memory to be recorded.
-    """
-    return _ingested_dt(meta)
-
-
 def _provenance_label(meta: dict) -> str | None:
     """Compact provenance label for injected and sampled memory text.
 
@@ -553,29 +548,6 @@ def _continuity_annotation(meta: dict) -> str | None:
             question_text = str(questions)
         parts.append(f"open={question_text}")
     return "; ".join(parts) if parts else None
-
-
-def _last_contact_with(rows: list[dict], participant: str, now: datetime) -> dict | None:
-    """Most recent memory (excluding historical imports) whose participants
-    include `participant`. Used to ground session reasoning in real elapsed
-    time since actual contact."""
-    latest_dt: datetime | None = None
-    participant_key = participant.casefold()
-    for r in rows:
-        meta = _metadata(r)
-        if _is_historical(meta):
-            continue
-        participants = meta.get("participants")
-        if not isinstance(participants, list):
-            continue
-        if not any(isinstance(value, str) and value.casefold() == participant_key for value in participants):
-            continue
-        dt = _contact_time_dt(meta)
-        if dt and (latest_dt is None or dt > latest_dt):
-            latest_dt = dt
-    if latest_dt is None:
-        return None
-    return {"timestamp": latest_dt.isoformat(), "relative": _relative_time(latest_dt, now)}
 
 
 def _message_quota(rows: list[dict], now: datetime, limit: int, window_hours: float = 24.0) -> dict:
@@ -1046,7 +1018,6 @@ async def memory_context(
             "memory_count": 0,
             "kernel": kernel_meta,
             "included": 0,
-            "last_contact_with_companion": None,
             "message_quota": _message_quota([], datetime.now(timezone.utc), settings.message_daily_limit),
             "delivery_state": "settled",
             "delivery_errors": [],
@@ -1065,7 +1036,6 @@ async def memory_context(
         "memory_count": 0,
         "kernel": kernel_meta,
         "included": 0,
-        "last_contact_with_companion": None,
         "message_quota": _message_quota([], datetime.now(timezone.utc), settings.message_daily_limit),
         "delivery_state": "settled",
         "delivery_errors": [],
@@ -1138,14 +1108,6 @@ async def memory_context(
     # deliver-once guarantee the whole safety design depends on.
     delivery_errors = _mark_pending_messages_delivered(table, pending_messages)
 
-    # Real-clock grounding: time since the last actual conversation with
-    # the primary companion (excluding historical imports), computed from
-    # the FULL row set — not just the top-N included in this context —
-    # so it reflects true elapsed time even if the most recent contact
-    # wasn't important enough to make the cut. The companion's name is
-    # configured via settings, never hardcoded — this module is generic.
-    contact_name = settings.primary_contact_name
-    last_contact = _last_contact_with(rows, contact_name, now)
     message_quota = _message_quota(rows, now, settings.message_daily_limit)
 
     type_order = [
@@ -1157,14 +1119,7 @@ async def memory_context(
     if kernel_text:
         lines.append(kernel_text)
     lines.append("## Long-term Memory")
-    if last_contact:
-        lines.append(
-            f"\n*Time since last real conversation with {contact_name.title()}: "
-            f"{last_contact['relative']}.*"
-        )
-    else:
-        lines.append(f"\n*No recorded conversation with {contact_name.title()} yet.*")
-
+    lines.append(f"\n{_LEGACY_CONTACT_PROVENANCE_NOTE}")
     for t in type_order:
         if t not in by_type:
             continue
@@ -1184,7 +1139,6 @@ async def memory_context(
         "memory_count": total,
         "kernel": kernel_meta,
         "included": len(top) + len(pending_messages),
-        "last_contact_with_companion": last_contact,
         "message_quota": message_quota,
         "delivery_state": "uncertain" if delivery_errors else "settled",
         "delivery_errors": delivery_errors,

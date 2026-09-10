@@ -156,7 +156,6 @@ class MemoryContextResult(TypedDict, total=False):
     # was included rather than having to infer it from the prose.
     kernel: dict[str, object] | None
     included: int | None
-    last_contact_with_companion: dict[str, object] | None
     message_quota: dict[str, object] | None
     delivery_state: str | None
     delivery_errors: list[str] | None

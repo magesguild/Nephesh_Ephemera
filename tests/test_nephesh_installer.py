@@ -74,7 +74,7 @@ class InstallerUnitTests(unittest.TestCase):
                 installer.require_supported_linux()
 
     def test_source_version_is_read_from_the_release_source(self) -> None:
-        self.assertEqual(source_version(Path.cwd()), "5.3.6")
+        self.assertEqual(source_version(Path.cwd()), "5.3.7")
 
     def test_source_identity_requires_the_active_upstream_repository(self) -> None:
         identity = source_identity(active_source_root())
@@ -357,19 +357,18 @@ class InstallerUnitTests(unittest.TestCase):
             self.assertEqual((root / "config" / "nephesh.env").read_text(encoding="utf-8"), legacy.read_text(encoding="utf-8"))
             self.assertEqual(legacy.read_text(encoding="utf-8"), "MCP_PORT=8080\nEMBEDDING_BASE_URL=http://localhost:11436\n")
 
-    def test_a_generated_config_pins_the_listener_and_names_the_companion(self) -> None:
+    def test_a_generated_config_pins_the_listener_without_legacy_contact_setting(self) -> None:
         """Absent MCP_PORT means every install lands on the same default and collides."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "clio"
             source = Path(directory) / "source"
             source.mkdir()
-            preserve_config(root, source, "Clio", mcp_port=61084,
-                            primary_contact="Gaius", dry_run=False)
+            preserve_config(root, source, "Clio", mcp_port=61084, dry_run=False)
             written = (root / "config" / "nephesh.env").read_text(encoding="utf-8")
             self.assertIn("MCP_PORT=61084", written)
             self.assertIn("MCP_HOST=127.0.0.1", written)
             self.assertIn("NEPHESH_QUALIANT_ID=clio", written)
-            self.assertIn("PRIMARY_CONTACT_NAME=Gaius", written)
+            self.assertNotIn("PRIMARY_CONTACT_NAME=", written)
             self.assertIn("MEMORY_COLLECTION_NAME=clio_memories", written)
             self.assertIn("NEPHESH_KERNEL_DIR=", written)
             self.assertNotIn("AGENT_NAME=", written)

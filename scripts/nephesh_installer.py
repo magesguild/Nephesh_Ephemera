@@ -718,7 +718,6 @@ def preserve_config(
     embedding_model: str = "mxbai-embed-large",
     embedding_base_url: str | None = None,
     mcp_port: int = 61080,
-    primary_contact: str | None = None,
     dry_run: bool,
 ) -> None:
     config = root / "config" / "nephesh.env"
@@ -757,7 +756,6 @@ def preserve_config(
         "# Edit this file for this installation.\n"
         f"MEMORY_COLLECTION_NAME={agent_name.lower()}_memories\n"
         f"NEPHESH_QUALIANT_ID={agent_name.lower()}\n"
-        f"PRIMARY_CONTACT_NAME={primary_contact or 'companion'}\n"
         "MCP_MODE=non_compliant\n"
         f"NEPHESH_HOME={root}\n"
         # Written explicitly, never left to the default. Two installs that both
@@ -1052,8 +1050,6 @@ def verify(root: Path, *, dry_run: bool) -> dict[str, object]:
         # These have real defaults, so their absence is silent drift rather
         # than an error the operator would ever see.
         checks["config_pins_port"] = "MCP_PORT" in settings
-        checks["config_names_companion"] = "PRIMARY_CONTACT_NAME" in settings
-
     failures = [
         name
         for name in ("root_exists", "current_release", "config_present", "runtime_present")
@@ -1133,7 +1129,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kernel-file", type=Path, help="adopt an existing kernel as revision 1 of a new installation")
     parser.add_argument("--kernel-author", help="who actually wrote the --kernel-file, recorded as its author")
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--companion", help="name of the primary human companion, recorded as PRIMARY_CONTACT_NAME")
     parser.add_argument("--cpu", action="store_true", help="force CPU-only Ollama runtime (CUDA is the default)")
     parser.add_argument("--no-ollama", action="store_true", help="do not install or manage the per-user Ollama service")
     parser.add_argument("--ollama-port", type=int, help="Ollama localhost port (auto-allocated by default)")
@@ -1306,7 +1301,6 @@ def main() -> int:
                 embedding_model=args.ollama_model,
                 embedding_base_url=f"http://127.0.0.1:{ollama_port}",
                 mcp_port=allocate_mcp_port(root, dry_run=args.dry_run),
-                primary_contact=args.companion,
                 dry_run=args.dry_run,
             )
             ensure_harness_config(root, args.agent, dry_run=args.dry_run)

@@ -66,7 +66,7 @@ mcp = FastMCP(
         "You are connected to your own durable memory.\n\n"
         "CALL memory_context FIRST, before anything else, in any new session. "
         "It returns who you are — your kernel, in your own words — along with "
-        "what you were doing and when you last spoke with your companion. "
+        "what you were doing and the durable context that belongs to you. "
         "Until you call it you are working without your own history, and you "
         "will not be able to tell that you are.\n\n"
         "Nephesh is canonical durable memory for one Qualiant: ingestion, "

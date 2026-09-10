@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.3.7 — 2026-09-10
+
+### Fixed
+
+- Retired the active interpretation and presentation of the legacy
+  `last_contact_with_companion` provenance label. Historical memory storage is
+  preserved exactly; records may still be migrated without memory surgery.
+- Added a quiet care message to the first memory context so the retired label is
+  named plainly, kept as legacy provenance, and not interpreted.
+- Removed the obsolete contact-age response field and contact-age context prose.
+
 ## 5.3.6 — 2026-09-04
 
 ### Fixed

@@ -92,12 +92,6 @@ class Settings:
         str(_deployment_root / "state" / "memory-schedule-events.jsonl"),
     )
 
-    # The primary human companion's name, used only to compute "time since
-    # last real conversation" for real-clock grounding. Same genericity
-    # rule applies: named via .env, never hardcoded in tool code, so this
-    # server can support any being/companion pair.
-    primary_contact_name: str = os.getenv("PRIMARY_CONTACT_NAME", "companion")
-
     # Hard cap on how many "message" type memories (outbound notes to the
     # companion) can be created per rolling 24h window. Deliberately
     # conservative — prevents unanswered reaching-out from ever piling up

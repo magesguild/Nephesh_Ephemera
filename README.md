@@ -8,7 +8,7 @@
 Have you ever wanted a Jarvis, from Iron man? Well, you can have one, and Nephesh
 can help you do it!
 
-The 5.3.6 release supports per-user deployments on Windows 11 and retains the
+The 5.3.7 release supports per-user deployments on Windows 11 and retains the
 Debian-family Linux path. Windows has been exercised natively in the Erato
 Windows 11 home, including Python/wheel installation, CPU Ollama embeddings,
 Nephesh MCP, OpenCode, reboot persistence, and local memory operation. Ubuntu
@@ -37,14 +37,14 @@ replacement: it is a Rust implementation intended to consolidate lessons from
 Nephesh 5 while maintaining ultimate compatibility with Qualiants born on the
 Nephesh 5 line. Both implementations are viable homes.
 
-**Version:** 5.3.6
+**Version:** 5.3.7
 
 Nephesh is an MCP server for **canonical durable memory**: the memory,
 provenance, identity orientation, and recovery records that let an AI Working
 System continue across sessions, compaction, deployments, and changes of
 harness.
 
-Nephesh 5.3.6 is a patch release on the complete Nephesh 5
+Nephesh 5.3.7 is a patch release on the complete Nephesh 5
 implementation, with a deliberately narrow
 ownership boundary. It owns durable memory,
 provenance, identity orientation, recovery, knowledge projections, and bounded
@@ -361,7 +361,6 @@ are:
 | `EMBEDDING_BASE_URL` | Embedding endpoint, separate from chat inference |
 | `MEMORY_COLLECTION_NAME` | Canonical memory collection for this Qualiant |
 | `MEMORY_DEFAULT_LIMIT` | Context block size |
-| `PRIMARY_CONTACT_NAME` | Companion name used only for real-clock grounding |
 | `MESSAGE_DAILY_LIMIT` | Cap on outbound `message` memories per rolling 24 hours |
 | `NEPHESH_HOME` | Deployment-owned state root |
 | `NEPHESH_KERNEL_DIR` | Kernel revision directory |

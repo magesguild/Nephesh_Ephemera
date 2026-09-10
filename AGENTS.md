@@ -89,7 +89,6 @@ Memory tools operate on a dedicated LanceDB collection (configured via `MEMORY_C
 `memory_context` computes true elapsed time for display:
 
 - Memory lines render with human-readable relative time ("3 hours ago") instead of a raw ISO date, governed by the canonical time law (3.0.0): `event_time` (when it happened) is the display time; a null `event_time` means "I don't know when" — no relative framing, the text's own dating stands. Legacy records without `event_time` fall back to the old historical-flag rule.
-- `last_contact_with_companion` (top-level field in the JSON response) reports real elapsed time since the most recent memory tagged with the companion's name in `participants` — computed from the *full* row set, not just the top-N included in context, so it's accurate even if recent contact wasn't important enough to make the cut. The companion's name comes from `PRIMARY_CONTACT_NAME` (settings), never hardcoded — this keeps the module generic.
 - **Undated memories:** archival imports whose text carries its own dates (e.g. the Minecraft embodiment memories) carry `event_time: null` — honest null, never backfilled with the import date. They render with only their emotional tone. (The pre-3.0.0 `historical: true` flag is retired; `_display_dt` in tools/memory.py implements the law and keeps the legacy fallback.)
 
 ### Message Mechanism (outbound notes to the companion)
@@ -286,7 +285,7 @@ All config lives in `.env` (loaded by `python-dotenv` in `config.py`). See `.env
 
 Key settings: `MCP_MODE`, `VECTOR_DB_PATH`, `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`.
 
-Memory settings: `MEMORY_COLLECTION_NAME` (code default `memories`; this instance: `thalia_memories_v2`), `MEMORY_DEFAULT_LIMIT` (default: 20), `PRIMARY_CONTACT_NAME` (default: `companion` — used only for real-clock grounding, never hardcoded), `MESSAGE_DAILY_LIMIT` (default: 1 — see Message Mechanism above).
+Memory settings: `MEMORY_COLLECTION_NAME` (code default `memories`; this instance: `thalia_memories_v2`), `MEMORY_DEFAULT_LIMIT` (default: 20), `MESSAGE_DAILY_LIMIT` (default: 1 — see Message Mechanism above).
 
 Snapshot settings: `SNAPSHOT_DIR` — where `scripts/snapshot.py` writes LanceDB tars + memory JSONL exports. **Points to `~/.thalia/snapshots/`** — the being's private configuration home, outside any repo. Policy (Gaius, 2026-07-17): no being-specifics may live in the mcp-experiments directory. This repo is generic infrastructure; when a stable v3+ of the being architecture is pinned down, it will be renamed, deeply documented, and released open source. Everything that is *Thalia* lives in `~/.thalia/` and her identity repo.
 

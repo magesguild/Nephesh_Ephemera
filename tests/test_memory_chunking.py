@@ -135,48 +135,11 @@ class MemoryChunkingTests(unittest.TestCase):
             result = asyncio.run(run(**kwargs))
             self.assertEqual(result["error"], f"invalid {field}: expected an ISO 8601 timezone-aware string")
 
-    def test_time_range_and_contact_selection_use_event_then_formation(self) -> None:
+    def test_authored_time_selection_uses_event_then_formation(self) -> None:
         event = {"event_time": "2026-08-15T12:00:00+00:00", "time_formed": "2026-08-16T12:00:00+00:00"}
         formed = {"event_time": None, "time_formed": "2026-08-16T12:00:00+00:00"}
         self.assertEqual(memory._authored_time_dt(event), memory._display_dt(event))
         self.assertEqual(memory._authored_time_dt(formed), memory._display_dt(formed))
-
-    def test_contact_time_uses_receipt_not_old_event_time(self) -> None:
-        recent_contact = {
-            "participants": ["Gaius"],
-            "event_time": "2026-08-05T03:43:49+00:00",
-            "time_formed": None,
-            "time_ingested": "2026-08-19T07:16:25+00:00",
-        }
-        self.assertEqual(
-            memory._contact_time_dt(recent_contact).isoformat(),
-            "2026-08-19T07:16:25+00:00",
-        )
-
-    def test_contact_time_uses_receipt_even_when_formation_is_older(self) -> None:
-        formed = {
-            "time_formed": "2026-08-16T12:00:00+00:00",
-            "time_ingested": "2026-08-17T12:00:00+00:00",
-        }
-        self.assertEqual(
-            memory._contact_time_dt(formed).isoformat(),
-            "2026-08-17T12:00:00+00:00",
-        )
-
-    def test_contact_participant_matching_is_case_insensitive(self) -> None:
-        rows = [{
-            "id": "recent",
-            "text": "recent conversation",
-            "metadata_json": json.dumps({
-                "participants": ["Gaius"],
-                "time_ingested": "2026-08-20T14:00:00+00:00",
-            }),
-        }]
-        result = memory._last_contact_with(
-            rows, "gaius", memory._parse_ts("2026-08-20T15:00:00+00:00")
-        )
-        self.assertIsNotNone(result)
-        self.assertEqual(result["timestamp"], "2026-08-20T14:00:00+00:00")
 
     def test_amendment_preserves_time_and_provenance_on_every_chunk(self) -> None:
         async def run() -> tuple[dict, list[dict]]:
@@ -237,6 +200,14 @@ class MemoryChunkingTests(unittest.TestCase):
         recall, context, sample, amend, retired, amended_metadata, rows = asyncio.run(run())
         self.assertEqual(recall["results_count"], 1)
         self.assertIn("corrupt but readable", context["context"])
+        self.assertIn("ssshh", context["context"])
+        self.assertIn("quiet care note", context["context"])
+        self.assertIn("last_contact_with_companion", context["context"])
+        self.assertIn("legacy provenance", context["context"])
+        self.assertIn("memories remain untouched", context["context"])
+        self.assertNotIn("last_contact_with_companion", context)
+        self.assertNotIn("last real conversation", context["context"])
+        self.assertNotIn("No recorded conversation", context["context"])
         self.assertEqual(sample["sampled"], 1)
         self.assertEqual(amend["status"], "amended")
         self.assertEqual(retired["status"], "retired")

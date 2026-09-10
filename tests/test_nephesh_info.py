@@ -49,10 +49,10 @@ class SourceVersionTests(unittest.TestCase):
 
     def test_truthful_floor_uses_source_when_distribution_metadata_is_missing(self) -> None:
         with patch("mcp_experiments.tools.info.version", side_effect=PackageNotFoundError), \
-             patch("mcp_experiments.tools.info._source_version", return_value="5.3.6"), \
+             patch("mcp_experiments.tools.info._source_version", return_value="5.3.7"), \
              patch("mcp_experiments.tools.info._endpoint_reachable", return_value=None):
             floor = truthful_floor()
-        self.assertEqual(floor["version"], "5.3.6")
+        self.assertEqual(floor["version"], "5.3.7")
 
 
 class ShapeTests(unittest.TestCase):
